@@ -524,6 +524,128 @@ app.get('/api/bots/:name/logs', auth, async (req, res) => {
     res.json({ logs });
 });
 
+// === FILE MANAGER ===
+function safeBotPath(botName, relPath) {
+    const base = path.resolve(getBotPath(botName));
+    const target = path.resolve(base, relPath || '.');
+    if (target !== base && !target.startsWith(base + path.sep)) return null;
+    return target;
+}
+async function canManageBot(botName, session) {
+    const b = (await db.getBots()).find(x => x.name === botName);
+    if (!b) return null;
+    const admin = await isAdmin(session);
+    if (!admin && b.owner !== session.id) return null;
+    return b;
+}
+
+app.get('/api/bots/:name/files', auth, async (req, res) => {
+    const name = req.params.name;
+    const b = await canManageBot(name, req.session);
+    if (!b) return res.status(403).json({ error: 'Sem permissao' });
+    const dir = safeBotPath(name, req.query.path || '.');
+    if (!dir) return res.status(400).json({ error: 'Caminho invalido' });
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return res.status(404).json({ error: 'Pasta nao encontrada' });
+    const items = fs.readdirSync(dir, { withFileTypes: true }).map(f => {
+        const fp = path.join(dir, f.name);
+        let size = 0, mtime = null;
+        try { const st = fs.statSync(fp); size = f.isDirectory() ? 0 : st.size; mtime = st.mtime; } catch(e) {}
+        return { name: f.name, isDir: f.isDirectory(), size, mtime };
+    }).sort((a, b) => (a.isDir === b.isDir) ? a.name.localeCompare(b.name) : (a.isDir ? -1 : 1));
+    res.json({ path: req.query.path || '.', items });
+});
+
+app.get('/api/bots/:name/files/content', auth, async (req, res) => {
+    const name = req.params.name;
+    const b = await canManageBot(name, req.session);
+    if (!b) return res.status(403).json({ error: 'Sem permissao' });
+    const fp = safeBotPath(name, req.query.path || '');
+    if (!fp) return res.status(400).json({ error: 'Caminho invalido' });
+    if (!fs.existsSync(fp) || !fs.statSync(fp).isFile()) return res.status(404).json({ error: 'Arquivo nao encontrado' });
+    const size = fs.statSync(fp).size;
+    if (size > 2 * 1024 * 1024) return res.status(400).json({ error: 'Arquivo muito grande para editar (max 2MB)' });
+    const ext = path.extname(fp).toLowerCase();
+    const binaryExts = ['.png','.jpg','.jpeg','.gif','.webp','.ico','.zip','.rar','.7z','.exe','.bin','.mp3','.mp4','.ogg','.wav','.woff','.woff2','.ttf','.eot','.sqlite','.db','.jar','.node'];
+    if (binaryExts.includes(ext)) return res.status(400).json({ error: 'Arquivo binario, nao pode ser editado aqui' });
+    try {
+        let content = fs.readFileSync(fp, 'utf8');
+        if (content.length > 2 * 1024 * 1024) return res.status(400).json({ error: 'Arquivo muito grande para editar' });
+        res.json({ content, path: req.query.path || '' });
+    } catch(e) { res.status(500).json({ error: 'Erro ao ler arquivo' }); }
+});
+
+app.post('/api/bots/:name/files/write', auth, async (req, res) => {
+    const name = req.params.name;
+    const b = await canManageBot(name, req.session);
+    if (!b) return res.status(403).json({ error: 'Sem permissao' });
+    const { path: relPath, content } = req.body;
+    if (typeof relPath !== 'string' || relPath.includes('..')) return res.status(400).json({ error: 'Caminho invalido' });
+    const fp = safeBotPath(name, relPath);
+    if (!fp) return res.status(400).json({ error: 'Caminho invalido' });
+    const base = path.resolve(getBotPath(name));
+    if (path.dirname(fp) === base) return res.status(403).json({ error: 'Nao pode alterar arquivos na raiz do bot' });
+    if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Arquivo nao encontrado' });
+    if (!fs.statSync(fp).isFile()) return res.status(400).json({ error: 'Nao e um arquivo' });
+    if (typeof content !== 'string' || content.length > 2 * 1024 * 1024) return res.status(400).json({ error: 'Conteudo invalido' });
+    fs.writeFileSync(fp, content, 'utf8');
+    logActivity('file_edit', 'Editou ' + relPath + ' em ' + name, req.session);
+    res.json({ success: true });
+});
+
+app.post('/api/bots/:name/files/create', auth, async (req, res) => {
+    const name = req.params.name;
+    const b = await canManageBot(name, req.session);
+    if (!b) return res.status(403).json({ error: 'Sem permissao' });
+    const { path: relPath, type, content } = req.body;
+    if (typeof relPath !== 'string' || relPath.includes('..') || !relPath.trim()) return res.status(400).json({ error: 'Caminho invalido' });
+    const fp = safeBotPath(name, relPath);
+    if (!fp) return res.status(400).json({ error: 'Caminho invalido' });
+    if (fs.existsSync(fp)) return res.status(409).json({ error: 'Ja existe' });
+    if (type === 'folder') {
+        fs.mkdirSync(fp, { recursive: true });
+    } else {
+        const parent = path.dirname(fp);
+        if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });
+        fs.writeFileSync(fp, typeof content === 'string' ? content : '', 'utf8');
+    }
+    logActivity('file_create', 'Criou ' + relPath + ' em ' + name, req.session);
+    res.json({ success: true });
+});
+
+app.post('/api/bots/:name/files/rename', auth, async (req, res) => {
+    const name = req.params.name;
+    const b = await canManageBot(name, req.session);
+    if (!b) return res.status(403).json({ error: 'Sem permissao' });
+    const { path: oldPath, newPath } = req.body;
+    if (typeof oldPath !== 'string' || typeof newPath !== 'string' || oldPath.includes('..') || newPath.includes('..')) return res.status(400).json({ error: 'Caminho invalido' });
+    const from = safeBotPath(name, oldPath);
+    const to = safeBotPath(name, newPath);
+    if (!from || !to) return res.status(400).json({ error: 'Caminho invalido' });
+    if (!fs.existsSync(from)) return res.status(404).json({ error: 'Nao encontrado' });
+    if (fs.existsSync(to)) return res.status(409).json({ error: 'Destino ja existe' });
+    const base = path.resolve(getBotPath(name));
+    if (path.dirname(from) === base || path.dirname(to) === base) return res.status(403).json({ error: 'Nao pode mover arquivos na raiz do bot' });
+    fs.renameSync(from, to);
+    logActivity('file_rename', 'Renomeou ' + oldPath + ' em ' + name, req.session);
+    res.json({ success: true });
+});
+
+app.delete('/api/bots/:name/files', auth, async (req, res) => {
+    const name = req.params.name;
+    const b = await canManageBot(name, req.session);
+    if (!b) return res.status(403).json({ error: 'Sem permissao' });
+    const relPath = req.query.path || '';
+    if (typeof relPath !== 'string' || relPath.includes('..') || !relPath.trim()) return res.status(400).json({ error: 'Caminho invalido' });
+    const fp = safeBotPath(name, relPath);
+    if (!fp) return res.status(400).json({ error: 'Caminho invalido' });
+    if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Nao encontrado' });
+    const base = path.resolve(getBotPath(name));
+    if (path.dirname(fp) === base) return res.status(403).json({ error: 'Nao pode deletar arquivos na raiz do bot' });
+    try { fs.rmSync(fp, { recursive: true, force: true }); } catch(e) { return res.status(500).json({ error: 'Erro ao deletar' }); }
+    logActivity('file_delete', 'Deletou ' + relPath + ' em ' + name, req.session);
+    res.json({ success: true });
+});
+
 // === LIGAR ALL (admin/owner) ===
 app.post('/api/bots/start-all', adminOnly, async (req, res) => {
     const allBots = await db.getBots();

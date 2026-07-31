@@ -161,6 +161,35 @@ body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); 
 .btn-refresh { background:none; border:1px solid var(--border); border-radius:8px; color:var(--muted); padding:6px; cursor:pointer; transition:all .15s; display:flex; }
 .btn-refresh:hover { color:var(--text); border-color:var(--border2); }
 
+/* ============ FILE MANAGER ============ */
+.btn-files-action { display:flex; align-items:center; gap:6px; padding:6px 14px; border:1px solid var(--border); border-radius:8px; background:rgba(59,130,246,.06); color:#60a5fa; font-size:11px; font-weight:600; cursor:pointer; transition:all .15s; font-family:Inter,sans-serif; white-space:nowrap; }
+.btn-files-action:hover { border-color:rgba(59,130,246,.3); }
+.btn-files-action.save { background:rgba(34,197,94,.08); color:#22c55e; border-color:rgba(34,197,94,.25); }
+.btn-files-action.save:hover { border-color:rgba(34,197,94,.45); }
+.files-breadcrumb { display:flex; align-items:center; flex-wrap:wrap; gap:2px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; margin-bottom:10px; background:rgba(9,9,11,.4); font-size:12px; }
+.fb-crumb { color:var(--muted); cursor:pointer; padding:2px 6px; border-radius:6px; transition:all .15s; }
+.fb-crumb:hover { color:var(--text); background:rgba(255,255,255,.05); }
+.fb-crumb.fb-root { color:#60a5fa; font-weight:600; }
+.fb-sep { color:#3f3f46; }
+.files-list { border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+.files-row { display:flex; align-items:center; gap:12px; padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.04); cursor:pointer; transition:background .12s; }
+.files-row:last-child { border-bottom:none; }
+.files-row:hover { background:rgba(255,255,255,.03); }
+.files-row.selected { background:rgba(59,130,246,.07); }
+.files-icon { flex-shrink:0; display:flex; }
+.files-name { flex:1; font-size:12px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:'JetBrains Mono','Fira Code',monospace; }
+.files-size { flex-shrink:0; font-size:10px; color:var(--muted); width:70px; text-align:right; }
+.files-actions { flex-shrink:0; display:flex; gap:4px; opacity:0; transition:opacity .12s; }
+.files-row:hover .files-actions { opacity:1; }
+.fbtn { background:none; border:1px solid var(--border); border-radius:6px; color:var(--muted); padding:4px 6px; cursor:pointer; display:flex; transition:all .15s; }
+.fbtn:hover { color:var(--text); border-color:var(--border2); background:rgba(255,255,255,.04); }
+.fbtn.danger:hover { color:#ef4444; border-color:rgba(239,68,68,.35); background:rgba(239,68,68,.06); }
+.files-editor { width:100%; min-height:280px; background:rgba(9,9,11,.6); border:1px solid var(--border); border-radius:10px; padding:14px; color:var(--text); font-family:'JetBrains Mono','Fira Code',monospace; font-size:12px; line-height:1.6; resize:vertical; outline:none; }
+.files-editor:focus { border-color:rgba(59,130,246,.4); }
+#files-editor-name { font-family:'JetBrains Mono','Fira Code',monospace; font-size:12px !important; color:#60a5fa !important; word-break:break-all; }
+.bot-card-btns .b-files { border:1px solid var(--border); color:var(--muted); background:transparent; }
+.bot-card-btns .b-files:hover { border-color:rgba(59,130,246,.3); color:#60a5fa; }
+
 /* ============ PROFILE ============ */
 .profile-banner-wrap { position:relative; border-radius:var(--radius); overflow:hidden; margin-bottom:16px; border:1px solid var(--border); }
 .profile-banner-img { width:100%; height:180px; object-fit:cover; display:block; }

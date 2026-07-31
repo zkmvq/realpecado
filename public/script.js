@@ -304,6 +304,7 @@ function renderBots(bots) {
     <button class="b-stop" onclick="stopBot('${escJS(b.name)}')"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>Desligar</button>
     <button class="b-restart" onclick="restartBot('${escJS(b.name)}')" ${b.status==='installing'?'disabled':''}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/></svg>Reiniciar</button>
     <button class="b-console" onclick="openLogs('${escJS(b.name)}')"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>Console</button>
+    <button class="b-files" onclick="openFiles('${escJS(b.name)}')"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Arquivos</button>
     <button class="b-delete" onclick="deleteBot('${escJS(b.name)}')"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
     ` : `<span style="font-size:11px;color:#71717a">Aguardando dono para gerenciar</span>`}
   </div>
@@ -459,6 +460,125 @@ async function refreshLogs() {
     if(d&&d.logs){const c=document.getElementById('logs-content');c.innerHTML=d.logs.map(l=>`<div>${esc(l)}</div>`).join('');c.scrollTop=c.scrollHeight;}
 }
 function closeLogs(){document.getElementById('logs-section').style.display='none';currentLogsBot=null;clearInterval(logsInterval);}
+
+// === FILE MANAGER ===
+let currentFilesBot = null;
+let currentFilesPath = '.';
+
+function openFiles(n) {
+    currentFilesBot = n;
+    currentFilesPath = '.';
+    document.getElementById('files-section').style.display = 'block';
+    document.getElementById('files-bot-name').textContent = n;
+    document.getElementById('files-editor').style.display = 'none';
+    filesList();
+}
+function closeFiles() {
+    document.getElementById('files-section').style.display = 'none';
+    document.getElementById('files-editor').style.display = 'none';
+    currentFilesBot = null;
+}
+async function filesList() {
+    if (!currentFilesBot) return;
+    const d = await apiFetch(`/api/bots/${encodeURIComponent(currentFilesBot)}/files?path=${encodeURIComponent(currentFilesPath)}`);
+    if (!d || !d.items) { document.getElementById('files-list').innerHTML = '<p class="empty">Erro ao carregar arquivos</p>'; return; }
+    const bread = document.getElementById('files-breadcrumb');
+    const parts = (d.path === '.' ? [] : d.path.split('/'));
+    let acc = '';
+    let bhtml = '<span class="fb-crumb fb-root" onclick="filesNav(\'.\')">' + esc(currentFilesBot) + '</span>';
+    parts.forEach((p, i) => {
+        acc = acc ? acc + '/' + p : p;
+        bhtml += '<span class="fb-sep">/</span><span class="fb-crumb" onclick="filesNav(' + escJS(acc) + ')">' + esc(p) + '</span>';
+    });
+    bread.innerHTML = bhtml;
+    const c = document.getElementById('files-list');
+    if (!d.items.length) { c.innerHTML = '<p class="empty">Pasta vazia</p>'; return; }
+    c.innerHTML = d.items.map(f => {
+        const sizeTxt = f.isDir ? '' : (f.size >= 1048576 ? (f.size/1048576).toFixed(1) + ' MB' : f.size >= 1024 ? (f.size/1024).toFixed(1) + ' KB' : f.size + ' B');
+        const icon = f.isDir
+            ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>'
+            : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+        const row = `<div class="files-row" data-path="${escAttr((d.path === '.' ? '' : d.path + '/') + f.name)}" data-dir="${f.isDir}" ondblclick="${f.isDir ? `filesNav('${escJS((d.path === '.' ? '' : d.path + '/') + f.name)}')` : `filesOpenFile('${escJS((d.path === '.' ? '' : d.path + '/') + f.name)}')`}" onclick="filesRowClick(event,this)">
+          <div class="files-icon">${icon}</div>
+          <div class="files-name">${esc(f.name)}</div>
+          <div class="files-size">${esc(sizeTxt)}</div>
+          <div class="files-actions">
+            <button class="fbtn" onclick="event.stopPropagation();filesNav('${escJS((d.path === '.' ? '' : d.path + '/') + f.name)}')" ${f.isDir ? '' : 'style="display:none"'} title="Abrir"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>
+            <button class="fbtn" onclick="event.stopPropagation();filesOpenFile('${escJS((d.path === '.' ? '' : d.path + '/') + f.name)}')" ${f.isDir ? 'style="display:none"' : ''} title="Editar"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+            <button class="fbtn" onclick="event.stopPropagation();filesRename('${escJS((d.path === '.' ? '' : d.path + '/') + f.name)}')" title="Renomear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+            <button class="fbtn danger" onclick="event.stopPropagation();filesDelete('${escJS((d.path === '.' ? '' : d.path + '/') + f.name)}', ${f.isDir})" title="Deletar"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </div>
+        </div>`;
+        return row;
+    }).join('');
+}
+function filesRowClick(e, el) {
+    if (e.target.closest('.files-actions')) return;
+    document.querySelectorAll('.files-row').forEach(r => r.classList.remove('selected'));
+    el.classList.add('selected');
+}
+function filesNav(p) {
+    currentFilesPath = p || '.';
+    document.getElementById('files-editor').style.display = 'none';
+    filesList();
+}
+async function filesOpenFile(p) {
+    if (!currentFilesBot) return;
+    const d = await apiFetch(`/api/bots/${encodeURIComponent(currentFilesBot)}/files/content?path=${encodeURIComponent(p)}`);
+    if (!d || d.content === undefined) { alert(d && d.error ? d.error : 'Nao foi possivel abrir o arquivo'); return; }
+    document.getElementById('files-editor').style.display = 'block';
+    document.getElementById('files-editor-name').textContent = p;
+    document.getElementById('files-editor-content').value = d.content;
+    currentFilesEditorPath = p;
+}
+let currentFilesEditorPath = null;
+async function filesSave() {
+    if (!currentFilesBot || !currentFilesEditorPath) return;
+    const btn = document.getElementById('files-save-btn');
+    const content = document.getElementById('files-editor-content').value;
+    btn.disabled = true;
+    btn.innerHTML = 'Salvando...';
+    const res = await apiFetch(`/api/bots/${encodeURIComponent(currentFilesBot)}/files/write`, {
+        method: 'POST',
+        body: JSON.stringify({ path: currentFilesEditorPath, content })
+    });
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Salvar';
+    alert(res && res.success ? 'Arquivo salvo!' : (res && res.error ? res.error : 'Erro ao salvar'));
+}
+function filesCloseEditor() { document.getElementById('files-editor').style.display = 'none'; currentFilesEditorPath = null; }
+async function filesDelete(p, isDir) {
+    if (!currentFilesBot) return;
+    if (!confirm(`Deletar "${p}"?`)) return;
+    const res = await apiFetch(`/api/bots/${encodeURIComponent(currentFilesBot)}/files?path=${encodeURIComponent(p)}`, { method: 'DELETE' });
+    alert(res && res.success ? 'Deletado!' : (res && res.error ? res.error : 'Erro ao deletar'));
+    filesList();
+}
+async function filesRename(p) {
+    if (!currentFilesBot) return;
+    const newName = prompt('Novo nome:', p.split('/').pop());
+    if (!newName || newName === p.split('/').pop()) return;
+    const parent = p.includes('/') ? p.substring(0, p.lastIndexOf('/') + 1) : '';
+    const res = await apiFetch(`/api/bots/${encodeURIComponent(currentFilesBot)}/files/rename`, {
+        method: 'POST',
+        body: JSON.stringify({ path: p, newPath: parent + newName })
+    });
+    alert(res && res.success ? 'Renomeado!' : (res && res.error ? res.error : 'Erro ao renomear'));
+    filesList();
+}
+async function filesCreatePrompt() {
+    if (!currentFilesBot) return;
+    const isFolder = confirm('Criar uma PASTA? (Cancelar = criar arquivo)');
+    const name = prompt('Nome do ' + (isFolder ? 'arquivo' : 'pasta') + ':');
+    if (!name || !name.trim()) return;
+    const full = (currentFilesPath === '.' ? '' : currentFilesPath + '/') + name.trim();
+    const res = await apiFetch(`/api/bots/${encodeURIComponent(currentFilesBot)}/files/create`, {
+        method: 'POST',
+        body: JSON.stringify({ path: full, type: isFolder ? 'folder' : 'file' })
+    });
+    alert(res && res.success ? 'Criado!' : (res && res.error ? res.error : 'Erro ao criar'));
+    filesList();
+}
 function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML;}
 function escAttr(t){return t.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function escJS(t){return t.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/</g,'\\x3c').replace(/>/g,'\\x3e');}

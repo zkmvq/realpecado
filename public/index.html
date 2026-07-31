@@ -124,6 +124,28 @@
                     <div id="logs-content" class="logs"></div>
                 </div>
 
+                <div id="files-section" class="card" style="display:none">
+                    <div class="card-head">
+                        <h2>Arquivos: <span id="files-bot-name" style="color:#5865F2"></span></h2>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <button onclick="filesCreatePrompt()" class="btn-files-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Novo</button>
+                            <button onclick="closeFiles()" class="btn-refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+                        </div>
+                    </div>
+                    <div id="files-breadcrumb" class="files-breadcrumb"></div>
+                    <div id="files-list" class="files-list"><p class="empty">Carregando...</p></div>
+                    <div id="files-editor" style="display:none">
+                        <div class="card-head" style="margin-top:14px">
+                            <h3 id="files-editor-name" style="font-size:13px;font-weight:600;color:#a1a1aa"></h3>
+                            <div style="display:flex;align-items:center;gap:8px">
+                                <button onclick="filesSave()" id="files-save-btn" class="btn-files-action save"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Salvar</button>
+                                <button onclick="filesCloseEditor()" class="btn-refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+                            </div>
+                        </div>
+                        <textarea id="files-editor-content" class="files-editor" spellcheck="false"></textarea>
+                    </div>
+                </div>
+
                 <div id="purchases-section" class="card" style="display:none;margin-top:16px">
                     <div class="card-head">
                         <div>
