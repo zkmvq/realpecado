@@ -37,28 +37,35 @@ function jsonSave(name) {
 
 async function connectDB() {
     if (DATABASE_URL) {
-        try {
-            pgPool = new Pool({
-                connectionString: DATABASE_URL,
-                ssl: process.env.DB_SSL_VERIFY === 'true' ? { rejectUnauthorized: true } : { rejectUnauthorized: false },
-                max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 10000, allowExitOnIdle: false
-            });
-            await pgPool.query('CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, data JSONB, created_at TIMESTAMP DEFAULT NOW())');
-            await pgPool.query('CREATE TABLE IF NOT EXISTS staffs (id TEXT PRIMARY KEY, data JSONB)');
-            await pgPool.query('CREATE TABLE IF NOT EXISTS banned (id TEXT PRIMARY KEY, data JSONB)');
-            await pgPool.query('CREATE TABLE IF NOT EXISTS admins (id TEXT PRIMARY KEY)');
-            await pgPool.query('CREATE TABLE IF NOT EXISTS bots (name TEXT PRIMARY KEY, data JSONB)');
-            await pgPool.query('CREATE TABLE IF NOT EXISTS purchases (id SERIAL PRIMARY KEY, user_id TEXT, username TEXT, plan_name TEXT, plan_price TEXT, plan_tier TEXT, plan_duration TEXT, status TEXT DEFAULT \'pending\', created_at TIMESTAMP DEFAULT NOW(), reviewed_at TIMESTAMP)');
-            await pgPool.query('CREATE TABLE IF NOT EXISTS databases (id SERIAL PRIMARY KEY, user_id TEXT NOT NULL, db_type TEXT NOT NULL, db_name TEXT NOT NULL, db_user TEXT NOT NULL, db_password TEXT NOT NULL, db_host TEXT DEFAULT \'localhost\', db_port INTEGER DEFAULT 5432, status TEXT DEFAULT \'active\', created_at TIMESTAMP DEFAULT NOW())');
-            await pgPool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS auto_start BOOLEAN DEFAULT false');
-            await pgPool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS language TEXT DEFAULT NULL');
-            await pgPool.query('CREATE INDEX IF NOT EXISTS idx_purchases_user_id ON purchases(user_id)');
-            await pgPool.query('CREATE INDEX IF NOT EXISTS idx_purchases_status ON purchases(status)');
-            await pgPool.query('CREATE INDEX IF NOT EXISTS idx_databases_user_id ON databases(user_id)');
-            dbType = 'pg';
-            console.log('PostgreSQL conectado!');
-            return;
-        } catch (e) { console.error('Erro PostgreSQL:', e.message); }
+        for (let attempt = 1; attempt <= 5; attempt++) {
+            try {
+                pgPool = new Pool({
+                    connectionString: DATABASE_URL,
+                    ssl: { rejectUnauthorized: false },
+                    max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 15000, allowExitOnIdle: false
+                });
+                await pgPool.query('SELECT 1');
+                await pgPool.query('CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, data JSONB, created_at TIMESTAMP DEFAULT NOW())');
+                await pgPool.query('CREATE TABLE IF NOT EXISTS staffs (id TEXT PRIMARY KEY, data JSONB)');
+                await pgPool.query('CREATE TABLE IF NOT EXISTS banned (id TEXT PRIMARY KEY, data JSONB)');
+                await pgPool.query('CREATE TABLE IF NOT EXISTS admins (id TEXT PRIMARY KEY)');
+                await pgPool.query('CREATE TABLE IF NOT EXISTS bots (name TEXT PRIMARY KEY, data JSONB)');
+                await pgPool.query('CREATE TABLE IF NOT EXISTS purchases (id SERIAL PRIMARY KEY, user_id TEXT, username TEXT, plan_name TEXT, plan_price TEXT, plan_tier TEXT, plan_duration TEXT, status TEXT DEFAULT \'pending\', created_at TIMESTAMP DEFAULT NOW(), reviewed_at TIMESTAMP)');
+                await pgPool.query('CREATE TABLE IF NOT EXISTS databases (id SERIAL PRIMARY KEY, user_id TEXT NOT NULL, db_type TEXT NOT NULL, db_name TEXT NOT NULL, db_user TEXT NOT NULL, db_password TEXT NOT NULL, db_host TEXT DEFAULT \'localhost\', db_port INTEGER DEFAULT 5432, status TEXT DEFAULT \'active\', created_at TIMESTAMP DEFAULT NOW())');
+                await pgPool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS auto_start BOOLEAN DEFAULT false');
+                await pgPool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS language TEXT DEFAULT NULL');
+                await pgPool.query('CREATE INDEX IF NOT EXISTS idx_purchases_user_id ON purchases(user_id)');
+                await pgPool.query('CREATE INDEX IF NOT EXISTS idx_purchases_status ON purchases(status)');
+                await pgPool.query('CREATE INDEX IF NOT EXISTS idx_databases_user_id ON databases(user_id)');
+                dbType = 'pg';
+                console.log('PostgreSQL conectado! (tentativa ' + attempt + ')');
+                return;
+            } catch (e) {
+                console.error('Erro PostgreSQL (tentativa ' + attempt + '):', e.message);
+                if (attempt === 5) break;
+                await new Promise(r => setTimeout(r, 5000));
+            }
+        }
     }
     if (MONGO_URI) {
         try {
