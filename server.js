@@ -10,6 +10,7 @@ const AdmZip = require('adm-zip');
 const db = require('./db');
 
 const app = express();
+app.set('trust proxy', true);
 const PORT = process.env.PORT || 3000;
 
 const SITE_BANNER_URL = '/realpecado_mc_ig.png';
@@ -313,6 +314,7 @@ function startBotProcess(name) {
         proc.on('error', err => console.error('Erro ao iniciar bot ' + name + ':', err.message));
         bots[name] = proc;
         db.saveBot(name, { status: 'running', startedAt: new Date().toISOString() });
+        db.setAutoStart(name, true);
         return { success: true };
     } catch (e) { return { error: e.message }; }
 }
@@ -324,6 +326,7 @@ function stopBotProcess(name) {
         delete bots[name];
     }
     db.saveBot(name, { status: 'stopped', stoppedAt: new Date().toISOString() });
+    db.setAutoStart(name, false);
     return { success: true };
 }
 
