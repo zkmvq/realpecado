@@ -275,15 +275,21 @@ function startBotProcess(name) {
     const botPath = getBotPath(name);
     const mainFile = findMainFile(botPath);
     if (!mainFile) return { error: 'Nenhum entry point encontrado' };
+    const runDir = path.dirname(mainFile);
     try {
+        if (fs.existsSync(path.join(runDir, 'package.json')) && !fs.existsSync(path.join(runDir, 'node_modules'))) {
+            try {
+                execSync('npm install --prefer-offline', { cwd: runDir, stdio: 'pipe', timeout: 600000 });
+            } catch(e) { return { error: 'Erro ao instalar dependencias: ' + e.message }; }
+        }
         if (bots[name]) {
             try { bots[name].kill(); } catch(e) {}
             delete bots[name];
         }
         const proc = spawn('node', [mainFile], {
-            cwd: botPath,
+            cwd: runDir,
             stdio: ['pipe', 'pipe', 'pipe'],
-            env: { ...process.env, NODE_PATH: path.join(botPath, 'node_modules') }
+            env: { ...process.env, NODE_PATH: path.join(runDir, 'node_modules') }
         });
         proc._startedAt = Date.now();
         proc._name = name;
@@ -330,7 +336,13 @@ function findMainFile(dir) {
         if (fs.existsSync(path.join(dir, f))) return path.join(dir, f);
     }
     const files = fs.readdirSync(dir).filter(f => f.endsWith('.js'));
-    return files.length ? path.join(dir, files[0]) : null;
+    if (files.length) return path.join(dir, files[0]);
+    const subDirs = fs.readdirSync(dir).filter(f => { try { return fs.statSync(path.join(dir, f)).isDirectory() && !f.startsWith('.') && f !== 'node_modules'; } catch(e) { return false; } });
+    for (const sub of subDirs) {
+        const found = findMainFile(path.join(dir, sub));
+        if (found) return found;
+    }
+    return null;
 }
 
 async function getBotList() {
@@ -402,6 +414,18 @@ app.post('/api/bots', auth, upload.single('file'), async (req, res) => {
             fallback.extractAllTo(destDir, true);
         }
         try { fs.unlinkSync(zipPath); } catch(e2) {}
+        try {
+            const items = fs.readdirSync(botDir);
+            if (items.length === 1) {
+                const only = path.join(botDir, items[0]);
+                if (fs.statSync(only).isDirectory() && items[0] !== 'node_modules') {
+                    for (const f of fs.readdirSync(only)) {
+                        fs.renameSync(path.join(only, f), path.join(botDir, f));
+                    }
+                    try { fs.rmdirSync(only); } catch(e) {}
+                }
+            }
+        } catch(e) {}
         const pkgPath = path.join(botDir, 'package.json');
         let lang = 'Node.js';
         await db.saveBot(name, { owner: session.id, language: lang, status: 'installing', createdAt: new Date().toISOString() });

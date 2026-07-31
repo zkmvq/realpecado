@@ -321,7 +321,7 @@ function renderBots(bots) {
         }
         let html = '';
         if (myBots.length) {
-            html += `<div class="bots-section"><div class="bots-section-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Meus Bots <span class="bots-section-count">${myBots.length}</span>${(isOwn || isAdmin) ? '<button class="btn-start-all" onclick="startAllBots()" style="margin-left:auto;display:flex;align-items:center;gap:5px;padding:5px 12px;border:1px solid rgba(34,197,94,.3);border-radius:8px;background:rgba(34,197,94,.08);color:#22c55e;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg> LIGAR ALL</button>' : ''}</div><div class="bots-grid">${myBots.map(botCardHtml).join('')}</div></div>`;
+            html += `<div class="bots-section"><div class="bots-section-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Meus Bots <span class="bots-section-count">${myBots.length}</span></div><div class="bots-grid">${myBots.map(botCardHtml).join('')}</div></div>`;
         }
         for (const [ownerId, group] of Object.entries(grouped)) {
             html += `<div class="bots-section"><div class="bots-section-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> ${esc(group.name)} <span class="bots-section-count">${group.bots.length}</span></div><div class="bots-grid">${group.bots.map(botCardHtml).join('')}</div></div>`;
@@ -418,14 +418,15 @@ async function deleteBot(n) { if(!confirm(`Deletar "${n}"?`))return;await apiFet
 
 async function startAllBots() {
     if (!confirm('Ligar TODOS os bots do site?')) return;
-    const btn = document.querySelector('.btn-start-all');
+    const btn = document.getElementById('btn-start-all-global');
     if (btn) { btn.disabled = true; btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="10"/></svg> Ligando...'; }
     try {
         const res = await apiFetch('/api/bots/start-all', { method: 'POST' });
         if (res && res.success) {
             const ok = res.results.success.length;
             const fail = res.results.failed.length;
-            alert(`${ok} bot(s) ligado(s) com sucesso!${fail ? ` ${fail} falha(s).` : ''}`);
+            const failDetails = res.results.failed && res.results.failed.length ? '\n' + res.results.failed.map(f => `- ${f.name}: ${f.error}`).join('\n') : '';
+            alert(`${ok} bot(s) ligado(s) com sucesso!${fail ? ` ${fail} falha(s).${failDetails}` : ''}`);
             refreshBots();
         } else {
             alert('Erro ao ligar todos os bots');
@@ -433,7 +434,7 @@ async function startAllBots() {
     } catch(e) {
         alert('Erro ao ligar todos os bots');
     }
-    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg> LIGAR ALL'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg> LIGAR TODOS'; }
 }
 
 async function openLogs(n) {
