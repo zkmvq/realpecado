@@ -352,7 +352,10 @@ async function getBotList() {
 }
 
 app.get('/api/bots', auth, async (req, res) => {
-    res.json(await getBotList());
+    const all = await getBotList();
+    const admin = await isAdmin(req.session);
+    if (isOwner(req.session) || admin) return res.json(all);
+    res.json(all.filter(b => b.owner === req.session.id));
 });
 
 app.get('/api/bots/info', auth, async (req, res) => {
@@ -362,8 +365,14 @@ app.get('/api/bots/info', auth, async (req, res) => {
 
 app.get('/api/bots/stats', auth, async (req, res) => {
     const stats = {};
+    const admin = await isAdmin(req.session);
+    const allowed = isOwner(req.session) || admin ? null : req.session.id;
     for (const [name, proc] of Object.entries(bots)) {
         if (proc.exitCode !== null) continue;
+        if (allowed) {
+            const b = (await db.getBots()).find(x => x.name === name);
+            if (!b || b.owner !== allowed) continue;
+        }
         stats[name] = { ram: 0, cpu: 0, uptime: proc._startedAt ? Math.floor((Date.now() - proc._startedAt) / 1000) : 0 };
         try {
             const used = process.memoryUsage();
@@ -476,6 +485,11 @@ app.delete('/api/bots/:name', auth, async (req, res) => {
 
 app.get('/api/bots/:name/logs', auth, async (req, res) => {
     const name = req.params.name;
+    const b = (await db.getBots()).find(x => x.name === name);
+    const session = req.session;
+    if (!b) return res.status(404).json({ error: 'Bot nao encontrado' });
+    const admin = await isAdmin(session);
+    if (!admin && b.owner !== session.id) return res.status(403).json({ error: 'Sem permissao' });
     const proc = bots[name];
     const logs = proc ? (proc._logs || []).slice(-200) : [];
     res.json({ logs });
