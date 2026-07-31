@@ -395,7 +395,7 @@ app.post('/api/bots', auth, upload.single('file'), async (req, res) => {
                 const deps = { ...pkg.dependencies, ...pkg.devDependencies };
                 if (deps['discord.js'] && deps['discord.js'].startsWith('^14')) lang = 'Node.js';
                 await db.saveBot(name, { owner: session.id, language: lang, status: 'installing', createdAt: new Date().toISOString() });
-                execSync('npm install', { cwd: botDir, stdio: 'pipe', timeout: 120000 });
+                execSync('npm install --prefer-offline', { cwd: botDir, stdio: 'pipe', timeout: 600000 });
                 await db.saveBot(name, { owner: session.id, language: lang, status: 'stopped', createdAt: new Date().toISOString() });
             } catch(e) {
                 await db.saveBot(name, { owner: session.id, language: lang, status: 'stopped', createdAt: new Date().toISOString() });
