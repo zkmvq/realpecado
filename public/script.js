@@ -363,7 +363,7 @@ async function createBot() {
     if (!name) { s.textContent='Digite um nome';s.style.color='#ef4444';return; }
     if (!fi.files.length) { s.textContent='Selecione um .ZIP';s.style.color='#ef4444';return; }
     if (!fi.files[0].name.endsWith('.zip')) { s.textContent='Apenas .ZIP';s.style.color='#ef4444';return; }
-    const MAX_MB = 500;
+    const MAX_MB = 200;
     if (fi.files[0].size > MAX_MB * 1024 * 1024) { s.textContent='Arquivo muito grande! Maximo ' + MAX_MB + 'MB';s.style.color='#ef4444';return; }
     const fd = new FormData();
     fd.append('name', name);

@@ -381,9 +381,16 @@ app.post('/api/bots', auth, upload.single('file'), async (req, res) => {
     const botDir = getBotPath(name);
     if (fs.existsSync(botDir)) return res.status(409).json({ error: 'Bot ja existe' });
     try {
-        const zip = new AdmZip(req.file.path);
-        zip.extractAllTo(botDir, true);
-        fs.unlinkSync(req.file.path);
+        const zipPath = req.file.path;
+        const destDir = botDir;
+        if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+        try {
+            execSync(`unzip -o "${zipPath}" -d "${destDir}"`, { stdio: 'pipe', timeout: 120000 });
+        } catch(e) {
+            const fallback = new AdmZip(zipPath);
+            fallback.extractAllTo(destDir, true);
+        }
+        try { fs.unlinkSync(zipPath); } catch(e2) {}
         const pkgPath = path.join(botDir, 'package.json');
         let lang = 'Node.js';
         await db.saveBot(name, { owner: session.id, language: lang, status: 'installing', createdAt: new Date().toISOString() });
