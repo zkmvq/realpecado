@@ -411,13 +411,21 @@ async function createBot() {
     }
 }
 
-async function startBot(n) { await apiFetch(`/api/bots/${encodeURIComponent(n)}/start`,{method:'POST'});refreshBots(); }
+async function startBot(n) {
+    const btn = document.querySelector(`.bot-card[data-bot="${CSS.escape(n)}"] .b-start`);
+    if (btn) { btn.disabled = true; btn.textContent = 'Ligando...'; }
+    try {
+        const res = await apiFetch(`/api/bots/${encodeURIComponent(n)}/start`,{method:'POST'});
+        if (!res || !res.success) alert('Erro ao ligar o bot: ' + (res && res.error ? res.error : 'sem permissao ou bot nao encontrado'));
+    } catch(e) { alert('Erro ao ligar o bot: ' + e.message); }
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>Ligar'; }
+    refreshBots();
+}
 async function stopBot(n) { await apiFetch(`/api/bots/${encodeURIComponent(n)}/stop`,{method:'POST'});refreshBots(); }
 async function restartBot(n) { await apiFetch(`/api/bots/${encodeURIComponent(n)}/restart`,{method:'POST'});refreshBots(); }
 async function deleteBot(n) { if(!confirm(`Deletar "${n}"?`))return;await apiFetch(`/api/bots/${encodeURIComponent(n)}`,{method:'DELETE'});refreshBots(); }
 
 async function startAllBots() {
-    if (!confirm('Ligar TODOS os bots do site?')) return;
     const btn = document.getElementById('btn-start-all-global');
     if (btn) { btn.disabled = true; btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="10"/></svg> Ligando...'; }
     try {
@@ -429,10 +437,10 @@ async function startAllBots() {
             alert(`${ok} bot(s) ligado(s) com sucesso!${fail ? ` ${fail} falha(s).${failDetails}` : ''}`);
             refreshBots();
         } else {
-            alert('Erro ao ligar todos os bots');
+            alert('Erro ao ligar todos os bots (verifique se voce e admin/owner)');
         }
     } catch(e) {
-        alert('Erro ao ligar todos os bots');
+        alert('Erro ao ligar todos os bots: ' + e.message);
     }
     if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg> LIGAR TODOS'; }
 }
