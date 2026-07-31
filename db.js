@@ -37,12 +37,12 @@ function jsonSave(name) {
 
 async function connectDB() {
     if (DATABASE_URL) {
-        for (let attempt = 1; attempt <= 5; attempt++) {
+        for (let attempt = 1; attempt <= 2; attempt++) {
             try {
                 pgPool = new Pool({
                     connectionString: DATABASE_URL,
                     ssl: { rejectUnauthorized: false },
-                    max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 15000, allowExitOnIdle: false
+                    max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000, allowExitOnIdle: false
                 });
                 await pgPool.query('SELECT 1');
                 await pgPool.query('CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, data JSONB, created_at TIMESTAMP DEFAULT NOW())');
@@ -62,8 +62,8 @@ async function connectDB() {
                 return;
             } catch (e) {
                 console.error('Erro PostgreSQL (tentativa ' + attempt + '):', e.message);
-                if (attempt === 5) break;
-                await new Promise(r => setTimeout(r, 5000));
+                if (attempt === 2) break;
+                await new Promise(r => setTimeout(r, 3000));
             }
         }
     }
