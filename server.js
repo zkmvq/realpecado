@@ -22,7 +22,7 @@ const OWNER_ID = '1473070694425301205';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 
 app.use(morgan('short'));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '600mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'public')));

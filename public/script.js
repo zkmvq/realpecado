@@ -389,7 +389,7 @@ async function createBot() {
             };
             xhr.onload = () => { try { resolve(JSON.parse(xhr.responseText)); } catch(e) { reject(new Error('Resposta invalida')); } };
             xhr.onerror = () => reject(new Error('Falha na conexao'));
-            xhr.timeout = 300000;
+            xhr.timeout = 1800000;
             xhr.ontimeout = () => reject({ name: 'AbortError' });
             xhr.send(fd);
         });
@@ -403,7 +403,7 @@ async function createBot() {
             const pollInterval = setInterval(() => { refreshBots(); attempts++; if (attempts > 30) clearInterval(pollInterval); }, 2000);
         } else { s.textContent=result.error||'Erro';s.style.color='#ef4444'; }
     } catch(e) {
-        s.textContent = e.name === 'AbortError' ? 'Upload demorou muito (>5min)' : 'Erro: ' + e.message;
+        s.textContent = e.name === 'AbortError' ? 'Upload demorou muito (>30min)' : 'Erro: ' + e.message;
         s.style.color='#ef4444';
     } finally {
         if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
