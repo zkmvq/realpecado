@@ -354,9 +354,12 @@ async function getBotList() {
         const proc = bots[b.name];
         const isRunning = proc && proc.exitCode === null;
         const uptime = isRunning ? Math.floor((Date.now() - proc._startedAt) / 1000) : 0;
+        let status = 'stopped';
+        if (isRunning) status = 'running';
+        else if (b.status === 'installing') status = 'installing';
         return {
             name: b.name, owner: b.owner, ownerName: ownerNames[b.owner] || b.owner,
-            status: isRunning ? 'running' : (b.status || 'stopped'),
+            status,
             language: b.language || 'Node.js',
             ram: b.ram || 0, cpu: b.cpu || 0, uptime,
             auto_start: b.auto_start || false,
@@ -730,6 +733,11 @@ async function loadSessions() {
 
 async function startBotsFromDB() {
     const botList = await db.getBots();
+    for (const b of botList) {
+        if (b.status === 'running' || b.status === 'installing') {
+            await db.saveBot(b.name, { status: 'stopped', stoppedAt: new Date().toISOString() });
+        }
+    }
     for (const b of botList) {
         if (b.auto_start) {
             const botDir = getBotPath(b.name);
