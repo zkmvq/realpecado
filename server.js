@@ -30,10 +30,12 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 
 const BOTS_DIR = process.env.BOTS_DIR || path.join(__dirname, 'bots');
 if (!fs.existsSync(BOTS_DIR)) fs.mkdirSync(BOTS_DIR, { recursive: true });
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const upload = multer({
-    dest: process.env.UPLOADS_DIR || path.join(__dirname, 'uploads'),
-    limits: { fileSize: 500 * 1024 * 1024, files: 1 },
+    dest: UPLOADS_DIR,
+    limits: { fileSize: 200 * 1024 * 1024, files: 1 },
     fileFilter: (req, file, cb) => { if (!file.originalname.endsWith('.zip')) cb(new Error('Apenas .ZIP')); else cb(null, true); }
 });
 
