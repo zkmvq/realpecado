@@ -12,7 +12,7 @@ const db = require('./db');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const SITE_BANNER_URL = 'https://cdn.discordapp.com/attachments/1529031153586147469/1531495590658314351/realpecado_mc_ig.png';
+const SITE_BANNER_URL = '/realpecado_mc_ig.png';
 
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || process.env.ISCORD_CLIENT_SECRET;

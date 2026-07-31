@@ -144,7 +144,7 @@ function getAvatar(u) {
 
 function getBanner(u) {
     if (u && u.banner) return `https://cdn.discordapp.com/banners/${u.id}/${u.banner}.png?size=600`;
-    return 'https://cdn.discordapp.com/attachments/1529031153586147469/1531495590658314351/realpecado_mc_ig.png';
+    return '/realpecado_mc_ig.png';
 }
 
 const OWNER_ID = '1473070694425301205';
