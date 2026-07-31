@@ -33,7 +33,7 @@ if (!fs.existsSync(BOTS_DIR)) fs.mkdirSync(BOTS_DIR, { recursive: true });
 
 const upload = multer({
     dest: path.join(__dirname, 'uploads'),
-    limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+    limits: { fileSize: 500 * 1024 * 1024, files: 1 },
     fileFilter: (req, file, cb) => { if (!file.originalname.endsWith('.zip')) cb(new Error('Apenas .ZIP')); else cb(null, true); }
 });
 

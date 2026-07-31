@@ -101,28 +101,16 @@ async function loadProfileSubscription() {
     if (!c) return;
     const approved = data ? data.filter(p => p.status === 'approved') : [];
     if (!approved.length) {
-        c.innerHTML = '<div class="sub-status-row"><span class="sub-status-label">Plano</span><span class="sub-status-value inactive">Nenhum</span></div>';
+        c.innerHTML = '<div class="profile-sidebar-item"><span>Status</span><strong class="text-green">Inativo</strong></div><div class="profile-sidebar-item"><span>Plano</span><strong class="text-muted">Nenhum</strong></div>';
         return;
     }
     const latest = approved[0];
-    const tierColor = { bronze: 'bronze', prata: 'prata', ouro: 'ouro', diamante: 'diamante' }[latest.plan_tier] || 'bronze';
     c.innerHTML = `
-<div class="sub-status-row">
-  <span class="sub-status-label">Plano Ativo</span>
-  <span class="sub-status-value active"><span class="sub-tier-badge ${tierColor}">${esc(latest.plan_tier || '?')}</span> ${esc(latest.plan_name)}</span>
-</div>
-<div class="sub-status-row">
-  <span class="sub-status-label">Valor</span>
-  <span class="sub-status-value">${esc(latest.plan_price || '?')}</span>
-</div>
-<div class="sub-status-row">
-  <span class="sub-status-label">Duracao</span>
-  <span class="sub-status-value">${esc(latest.plan_duration || '?')}</span>
-</div>
-<div class="sub-status-row">
-  <span class="sub-status-label">Comprado em</span>
-  <span class="sub-status-value">${new Date(latest.created_at).toLocaleDateString('pt-BR')}</span>
-</div>`;
+<div class="profile-sidebar-item"><span>Status</span><strong class="text-green">Ativo</strong></div>
+<div class="profile-sidebar-item"><span>Plano</span><strong>${esc(latest.plan_name)}</strong></div>
+<div class="profile-sidebar-item"><span>Valor</span><strong>${esc(latest.plan_price || '?')}</strong></div>
+<div class="profile-sidebar-item"><span>Duracao</span><strong>${esc(latest.plan_duration || '?')}</strong></div>
+<div class="profile-sidebar-item"><span>Comprado</span><strong>${new Date(latest.created_at).toLocaleDateString('pt-BR')}</strong></div>`;
 }
 
 function renderProfilePlans() {
@@ -132,19 +120,18 @@ function renderProfilePlans() {
     c.innerHTML = plans.map(p => {
         const tier = p.tier || 'bronze';
         const tierColor = { bronze: '#cd7f32', prata: '#c0c0c0', ouro: '#ffd700', diamante: '#00c8ff' }[tier] || '#5865f2';
+        const iconSvg = TIER_ICONS[tier] || TIER_ICONS.bronze;
         return `
-<div class="profile-plan-mini">
-  <div class="profile-plan-mini-head">
-    <div class="plan-tier-icon ${tier}" style="width:28px;height:28px">${TIER_ICONS[tier] || TIER_ICONS.bronze}</div>
-    <div class="profile-plan-mini-name">${esc(p.name)}</div>
+<div class="profile-sidebar-plan">
+  <div class="profile-sidebar-plan-left">
+    <span class="profile-sidebar-plan-icon">${iconSvg}</span>
+    <div>
+      <div class="profile-sidebar-plan-name">${esc(p.name)}</div>
+      <div class="profile-sidebar-plan-price">${esc(p.price)} / ${esc(p.duration)}</div>
+    </div>
   </div>
-  <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:10px">
-    <div class="profile-plan-mini-price">${esc(p.price)}</div>
-    <div class="profile-plan-mini-dur">/ ${esc(p.duration)}</div>
-  </div>
-  <button class="plan-buy-btn" style="--tier-color:${tierColor};width:100%;justify-content:center" onclick="buyPlan(${escJS(JSON.stringify({name:p.name,price:p.price,tier,duration:p.duration}))})">
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
-    Comprar
+  <button class="profile-sidebar-plan-btn" style="background:${tierColor};color:#1a1a1e" onclick="buyPlan(${escJS(JSON.stringify({name:p.name,price:p.price,tier,duration:p.duration}))})">
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
   </button>
 </div>`;
     }).join('');
@@ -222,6 +209,15 @@ function enterApp() {
         document.getElementById('profile-badges').innerHTML = '<span class="badge badge-admin">Admin</span>';
     } else {
         document.getElementById('profile-badges').innerHTML = '<span class="badge" style="background:rgba(255,255,255,.05);color:#71717a;border:1px solid rgba(255,255,255,.06)">Usuario</span>';
+    }
+
+    const globalBtn = document.getElementById('btn-start-all-global');
+    if (globalBtn) {
+        if (DiscordUser && (DiscordUser.isOwner || DiscordUser.isAdmin)) {
+            globalBtn.style.display = 'flex';
+        } else {
+            globalBtn.style.display = 'none';
+        }
     }
 
     refreshBots();
@@ -367,7 +363,7 @@ async function createBot() {
     if (!name) { s.textContent='Digite um nome';s.style.color='#ef4444';return; }
     if (!fi.files.length) { s.textContent='Selecione um .ZIP';s.style.color='#ef4444';return; }
     if (!fi.files[0].name.endsWith('.zip')) { s.textContent='Apenas .ZIP';s.style.color='#ef4444';return; }
-    const MAX_MB = 50;
+    const MAX_MB = 500;
     if (fi.files[0].size > MAX_MB * 1024 * 1024) { s.textContent='Arquivo muito grande! Maximo ' + MAX_MB + 'MB';s.style.color='#ef4444';return; }
     const fd = new FormData();
     fd.append('name', name);

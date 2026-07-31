@@ -115,7 +115,7 @@
                 </div>
 
                 <div class="card">
-                    <div class="card-head"><h2>Meus Bots</h2><button onclick="refreshBots()" class="btn-refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button></div>
+                    <div class="card-head"><h2>Meus Bots</h2><div style="display:flex;align-items:center;gap:8px"><button id="btn-start-all-global" onclick="startAllBots()" class="btn-start-all-global" style="display:none;align-items:center;gap:6px;padding:6px 14px;border:1px solid rgba(34,197,94,.3);border-radius:8px;background:rgba(34,197,94,.08);color:#22c55e;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg> LIGAR TODOS</button><button onclick="refreshBots()" class="btn-refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button></div></div>
                     <div id="bots-list" class="bots-grid"><p class="empty">Nenhum bot encontrado</p></div>
                 </div>
 
@@ -176,52 +176,49 @@
                     </div>
                 </div>
 
-                <div class="profile-grid">
-                    <div class="profile-col-left">
-                        <div class="card">
-                            <div class="card-head"><h2>Informacoes da Conta</h2></div>
-                            <div class="profile-info-list">
-                                <div class="profile-info-row"><span class="profile-info-label">Nome</span><span class="profile-info-value" id="info-name">-</span></div>
-                                <div class="profile-info-row"><span class="profile-info-label">ID</span><span class="profile-info-value mono" id="info-id">-</span></div>
-                                <div class="profile-info-row"><span class="profile-info-label">Tipo</span><span class="profile-info-value" id="info-type">-</span></div>
-                                <div class="profile-info-row"><span class="profile-info-label">Membro desde</span><span class="profile-info-value" id="info-since">-</span></div>
-                            </div>
+                <div class="profile-content-grid">
+                    <div class="profile-sidebar">
+                        <div class="profile-sidebar-card">
+                            <div class="profile-sidebar-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Conta</div>
+                            <div class="profile-sidebar-item"><span>Nome</span><strong id="info-name">-</strong></div>
+                            <div class="profile-sidebar-item"><span>ID</span><strong class="mono" id="info-id">-</strong></div>
+                            <div class="profile-sidebar-item"><span>Tipo</span><strong id="info-type">-</strong></div>
+                            <div class="profile-sidebar-item"><span>Membro</span><strong id="info-since">-</strong></div>
                         </div>
 
-                        <div class="card">
-                            <div class="card-head"><h2>Meus Planos</h2></div>
-                            <div id="profile-plans-list" class="profile-plans-list">
+                        <div class="profile-sidebar-card">
+                            <div class="profile-sidebar-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg> Planos</div>
+                            <div id="profile-plans-list" class="profile-sidebar-plans">
                                 <p class="empty">Nenhum plano</p>
                             </div>
                         </div>
 
-                        <div class="card sub-card" style="margin-top:16px">
-                            <div class="card-head">
-                                <h2>Status da Assinatura</h2>
-                            </div>
+                        <div class="profile-sidebar-card">
+                            <div class="profile-sidebar-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Assinatura</div>
                             <div id="profile-sub-status">
-                                <p class="empty">Sem assinatura ativa</p>
+                                <div class="profile-sidebar-item"><span>Status</span><strong class="text-green">Inativo</strong></div>
+                                <div class="profile-sidebar-item"><span>Plano</span><strong class="text-muted">Nenhum</strong></div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="profile-col-right">
-                        <div class="card">
-                            <div class="card-head">
-                                <h2>Minhas Aplicacoes</h2>
+                    <div class="profile-main">
+                        <div class="profile-main-card">
+                            <div class="profile-main-card-head">
+                                <h3><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> Aplicacoes</h3>
                                 <button onclick="loadProfileBots()" class="btn-refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
                             </div>
-                            <div id="profile-bots-list" class="profile-bots-table">
+                            <div id="profile-bots-list" class="profile-main-list">
                                 <p class="empty">Carregando...</p>
                             </div>
                         </div>
 
-                        <div class="card" style="margin-top:16px">
-                            <div class="card-head">
-                                <h2>Historico de Compras</h2>
+                        <div class="profile-main-card">
+                            <div class="profile-main-card-head">
+                                <h3><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg> Compras</h3>
                                 <button onclick="loadProfilePurchases()" class="btn-refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
                             </div>
-                            <div id="profile-purchases-list" class="profile-purchases-list">
+                            <div id="profile-purchases-list" class="profile-main-list">
                                 <p class="empty">Carregando...</p>
                             </div>
                         </div>
