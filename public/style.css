@@ -419,7 +419,7 @@ body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); 
 .plan-delete-btn:hover { border-color:rgba(239,68,68,.4); color:#ef4444; background:rgba(239,68,68,.05); }
 
 /* ============ CHECKOUT MODAL ============ */
-#checkout-overlay { position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.65); backdrop-filter:blur(6px); display:flex; align-items:center; justify-content:center; animation:fadeIn .2s; }
+#checkout-overlay, #profile-overlay { position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.65); backdrop-filter:blur(6px); display:flex; align-items:center; justify-content:center; animation:fadeIn .2s; }
 .checkout-modal { background:var(--bg2); border:1px solid var(--border); border-radius:20px; width:440px; max-width:94vw; max-height:90vh; overflow-y:auto; animation:slideUp .25s ease; }
 .checkout-header { display:flex; align-items:center; justify-content:space-between; padding:20px 24px; border-bottom:1px solid var(--border); }
 .checkout-header h2 { font-family:'Funnel Display',sans-serif; font-size:18px; font-weight:700; }
@@ -512,6 +512,30 @@ body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); 
 .db-btn-copy:hover { border-color:rgba(59,130,246,.3); color:var(--blue); }
 .db-btn-reset:hover { border-color:rgba(251,191,36,.3); color:#f59e0b; }
 .db-btn-delete:hover { border-color:rgba(239,68,68,.3); color:var(--red); background:rgba(239,68,68,.05); }
+
+/* ============ PROFILE MODAL (staff) ============ */
+.profile-body { padding:20px 24px 24px; }
+.profile-top { display:flex; align-items:center; gap:16px; }
+.profile-avatar-wrap { display:flex; flex-direction:column; align-items:center; gap:6px; flex-shrink:0; }
+.profile-big-avatar { width:64px; height:64px; border-radius:50%; border:2px solid var(--border2); object-fit:cover; }
+.profile-head-info { flex:1; min-width:0; }
+.profile-name-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.profile-name { font-size:18px; font-weight:700; font-family:'Funnel Display',sans-serif; color:white; }
+.profile-id-row { display:flex; align-items:center; gap:8px; margin-top:4px; flex-wrap:wrap; }
+.profile-id { font-size:12px; color:var(--muted); font-family:'JetBrains Mono','Fira Code',monospace; }
+.profile-actions { display:flex; align-items:center; gap:8px; margin-top:12px; flex-wrap:wrap; }
+.profile-link-btn { display:inline-flex; align-items:center; gap:6px; padding:7px 12px; border-radius:9px; background:rgba(9,9,11,.5); color:var(--muted); border:1px solid var(--border); font-size:11px; font-weight:600; cursor:pointer; transition:all .15s; font-family:'Inter',sans-serif; text-decoration:none; }
+.profile-link-btn:hover { border-color:var(--border2); color:var(--text); }
+.profile-link-btn.discord { background:rgba(88,101,242,.12); color:#5865F2; border-color:rgba(88,101,242,.25); }
+.profile-link-btn.discord:hover { background:rgba(88,101,242,.2); color:#7289da; }
+.profile-online-label { font-size:11px; color:var(--muted); }
+.profile-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:20px; }
+.profile-section-title { margin-top:22px; font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; }
+.profile-purchases { margin-top:8px; }
+.profile-ticket-link { font-size:10px; font-weight:600; padding:3px 8px; border-radius:8px; background:rgba(88,101,242,.12); color:#5865F2; border:1px solid rgba(88,101,242,.25); text-decoration:none; white-space:nowrap; }
+.profile-ticket-link:hover { background:rgba(88,101,242,.2); }
+.staff-name-link { cursor:pointer; transition:color .15s; }
+.staff-name-link:hover { color:#5865F2; }
 
 
 
@@ -670,7 +694,7 @@ body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); 
     .plan-buy-btn { padding:12px 24px; }
 
     /* ---- CHECKOUT -> BOTTOM SHEET ---- */
-    #checkout-overlay { align-items:flex-end; }
+    #checkout-overlay, #profile-overlay { align-items:flex-end; }
     .checkout-modal { width:100%; max-width:100vw; border-radius:20px 20px 0 0; max-height:92vh; }
     .checkout-footer { position:sticky; bottom:0; background:var(--bg2); border-top:1px solid var(--border); padding:14px 16px calc(18px + env(safe-area-inset-bottom,0px)); }
     .checkout-confirm, .checkout-cancel { padding:13px; font-size:13px; }

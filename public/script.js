@@ -627,7 +627,7 @@ function renderStaffs(staffs) {
             </div>
             <div class="staff-info">
                 <div class="staff-name-row">
-                    <span class="staff-name">${esc(s.username)}</span>
+                    <span class="staff-name staff-name-link" onclick="openStaffProfile('${escJS(s.id)}')" title="Ver perfil">${esc(s.username)}</span>
                     ${isOwnerUser ? '<span class="staff-owner-badge">Owner</span>' : ''}
                     ${s.isAdmin && !isOwnerUser ? '<span class="staff-owner-badge" style="background:linear-gradient(135deg,rgba(88,101,242,.1),rgba(88,101,242,.03));color:#5865F2;border-color:rgba(88,101,242,.15)">Admin</span>' : ''}
                 </div>
@@ -681,6 +681,93 @@ async function makeAdmin(id, name) {
 async function removeAdmin(id) {
     if (!confirm('Remover admin desta pessoa?')) return;
     if ((await apiFetch(`/api/staffs/${encodeURIComponent(id)}/removeadmin`, { method: 'POST' }))?.success) loadStaffs();
+}
+
+let cachedAllPurchases = null;
+
+async function getAllPurchases() {
+    if (!cachedAllPurchases) { cachedAllPurchases = await apiFetch('/api/purchases') || []; }
+    return cachedAllPurchases;
+}
+
+async function openStaffProfile(id) {
+    const s = allStaffs.find(x => x.id === id);
+    if (!s) return;
+    const overlay = document.getElementById('profile-overlay');
+    const body = document.getElementById('profile-body');
+    if (!overlay || !body) return;
+    overlay.style.display = 'flex';
+    body.innerHTML = '<p class="empty" style="padding:24px">Carregando perfil...</p>';
+    const avatar = s.avatar ? `https://cdn.discordapp.com/avatars/${escAttr(s.id)}/${escAttr(s.avatar)}.png?size=128` : 'https://cdn.discordapp.com/embed/avatars/0.png';
+    const isOwnerUser = s.id === OWNER_ID;
+    let badges = '';
+    if (isOwnerUser) badges += '<span class="staff-owner-badge">Owner</span>';
+    else if (s.isAdmin) badges += '<span class="staff-owner-badge" style="background:linear-gradient(135deg,rgba(88,101,242,.1),rgba(88,101,242,.03));color:#5865F2;border-color:rgba(88,101,242,.15)">Admin</span>';
+    if (s.banned) badges += '<span class="staff-owner-badge" style="background:rgba(239,68,68,.1);color:#ef4444;border-color:rgba(239,68,68,.2)">Banido</span>';
+    const onlineHtml = s.online ? '<span style="color:#22c55e">Online agora</span>' : '<span style="color:var(--muted)">Offline</span>';
+    const lastLogin = s.lastLogin ? new Date(s.lastLogin).toLocaleDateString('pt-BR') : '-';
+    const registered = s.createdAt ? new Date(s.createdAt).toLocaleDateString('pt-BR') : '-';
+    const purchases = await getAllPurchases();
+    const mine = (purchases || []).filter(p => String(p.user_id) === String(id));
+    let purchasesHtml = '';
+    if (!mine.length) {
+        purchasesHtml = '<p class="empty" style="padding:12px 0">Nenhuma compra registrada</p>';
+    } else {
+        purchasesHtml = mine.map(p => {
+            const status = p.status || 'pending';
+            const date = new Date(p.created_at).toLocaleDateString('pt-BR');
+            const ticketLink = p.ticket_channel_id
+                ? `<a class="profile-ticket-link" href="https://discord.com/channels/${p.ticket_guild_id || DISCORD_USER_GUILD}/${p.ticket_channel_id}" target="_blank">Ticket</a>`
+                : '';
+            return `
+<div class="profile-purchase-item">
+  <div class="profile-purchase-icon ${status}"></div>
+  <div class="profile-purchase-info">
+    <div class="profile-purchase-name">${esc(p.plan_name)}</div>
+    <div class="profile-purchase-meta">
+      <span>${esc(p.plan_price || '?')}</span>
+      <span>${esc(p.plan_duration || '?')}</span>
+      <span>${date}</span>
+    </div>
+  </div>
+  <span class="profile-purchase-status ${status}">${PURCHASE_STATUS[status] || status}</span>
+  ${ticketLink}
+</div>`;
+        }).join('');
+    }
+    body.innerHTML = `
+<div class="profile-top">
+  <div class="profile-avatar-wrap">
+    <img class="profile-big-avatar" src="${escAttr(avatar)}" alt="">
+    <div class="staff-online-dot ${s.online ? 'online' : 'offline'}" style="position:static"></div>
+  </div>
+  <div class="profile-head-info">
+    <div class="profile-name-row">
+      <span class="profile-name">${esc(s.username)}</span>
+      ${badges}
+    </div>
+    <div class="profile-id-row">
+      <span class="profile-id">${esc(s.id)}</span>
+      <button class="profile-link-btn" onclick="copyStaffId('${escJS(s.id)}',this)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copiar ID</button>
+    </div>
+    <div class="profile-actions">
+      <a class="profile-link-btn discord" href="https://discord.com/users/${escAttr(s.id)}" target="_blank"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.369a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037 19.736 19.736 0 0 0-4.885 1.515.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg> Perfil no Discord</a>
+      <span class="profile-online-label">${onlineHtml}</span>
+    </div>
+  </div>
+</div>
+<div class="profile-stats">
+  <div class="profile-stat-card"><span class="profile-stat-val">${s.loginCount || 1}</span><span class="profile-stat-label">Logins</span></div>
+  <div class="profile-stat-card"><span class="profile-stat-val" style="font-size:15px">${esc(lastLogin)}</span><span class="profile-stat-label">Ultimo login</span></div>
+  <div class="profile-stat-card"><span class="profile-stat-val" style="font-size:15px">${esc(registered)}</span><span class="profile-stat-label">Membro desde</span></div>
+</div>
+<div class="profile-section-title">Compras (${mine.length})</div>
+<div class="profile-purchases">${purchasesHtml}</div>`;
+}
+
+function closeProfile() {
+    const overlay = document.getElementById('profile-overlay');
+    if (overlay) overlay.style.display = 'none';
 }
 
 async function checkSession() {
