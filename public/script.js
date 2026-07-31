@@ -382,8 +382,9 @@ async function createBot() {
                     const pct = Math.round((e.loaded / e.total) * 100);
                     const elapsed = (Date.now() - startTime) / 1000;
                     const speed = elapsed > 0 ? (e.loaded / 1024 / 1024 / elapsed).toFixed(1) : '?';
+                    const remaining = speed > 0 ? ((e.total - e.loaded) / 1024 / 1024 / parseFloat(speed)).toFixed(0) : '?';
                     s.textContent = pct < 100
-                        ? `Enviando ${pct}% (${speed} MB/s)...`
+                        ? `Enviando ${pct}% (${speed} MB/s) — ${remaining}s restante...`
                         : 'Processando ZIP...';
                 }
             };
@@ -400,7 +401,7 @@ async function createBot() {
             document.getElementById('file-label-text').textContent='Selecionar .ZIP';
             refreshBots();
             let attempts = 0;
-            const pollInterval = setInterval(() => { refreshBots(); attempts++; if (attempts > 30) clearInterval(pollInterval); }, 2000);
+            const pollInterval = setInterval(() => { refreshBots(); attempts++; if (attempts > 300) clearInterval(pollInterval); }, 2000);
         } else { s.textContent=result.error||'Erro';s.style.color='#ef4444'; }
     } catch(e) {
         s.textContent = e.name === 'AbortError' ? 'Upload demorou muito (>30min)' : 'Erro: ' + e.message;
