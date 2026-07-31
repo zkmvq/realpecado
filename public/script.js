@@ -1129,7 +1129,7 @@ async function confirmPurchase() {
                 msg += '\n\nUm ticket foi aberto no Discord. Clique OK para abrir.';
                 closeCheckout();
                 alert(msg);
-                window.open(`https://discord.com/channels/${DISCORD_USER_GUILD}/${data.ticketChannelId}`, '_blank');
+                window.open(`https://discord.com/channels/${data.ticketGuildId || DISCORD_USER_GUILD}/${data.ticketChannelId}`, '_blank');
             } else {
                 msg += '\n\nAbra um ticket no Discord e envie o comprovante.';
                 closeCheckout();

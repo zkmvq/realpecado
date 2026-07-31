@@ -21,6 +21,9 @@ const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || 'https://realpe
 const PASSWORD = process.env.PASSWORD || 'admin';
 const OWNER_ID = '1473070694425301205';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+const DISCORD_TICKET_CATEGORY_ID = process.env.DISCORD_TICKET_CATEGORY_ID || '';
+const DISCORD_API = 'https://discord.com/api/v10';
 
 app.use(morgan('short'));
 app.use(express.json({ limit: '600mb' }));
@@ -665,6 +668,57 @@ app.post('/api/bots/start-all', adminOnly, async (req, res) => {
 });
 
 // === PURCHASES ===
+async function discordFetch(path, opts = {}) {
+    if (!DISCORD_BOT_TOKEN) return null;
+    const res = await fetch(DISCORD_API + path, {
+        ...opts,
+        headers: { Authorization: 'Bot ' + DISCORD_BOT_TOKEN, 'Content-Type': 'application/json', ...(opts.headers || {}) }
+    });
+    if (!res.ok) { const body = await res.text().catch(() => ''); console.error('Discord API ' + path + ' -> ' + res.status + ': ' + body.slice(0, 200)); return null; }
+    return res.json();
+}
+
+async function createDiscordTicket({ id, session, planName, planPrice, planDuration, paymentMethod }) {
+    if (!DISCORD_BOT_TOKEN || !DISCORD_TICKET_CATEGORY_ID) return null;
+    try {
+        const category = await discordFetch('/channels/' + DISCORD_TICKET_CATEGORY_ID);
+        if (!category || !category.guild_id) return null;
+        const guildId = category.guild_id;
+        const isDiscordUser = session && session.type === 'discord' && /^\d+$/.test(String(session.id || ''));
+        const name = ('ticket-' + (session && session.username ? session.username : 'compra'))
+            .toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '').slice(0, 90) || 'ticket-compra';
+        const overwrites = [
+            { id: guildId, type: 0, deny: String(1024) },
+            ...(isDiscordUser ? [{ id: String(session.id), type: 1, allow: String(1024 + 2048 + 65536) }] : [])
+        ];
+        const channel = await discordFetch('/guilds/' + guildId + '/channels', {
+            method: 'POST',
+            body: JSON.stringify({ name, type: 0, parent_id: DISCORD_TICKET_CATEGORY_ID, permission_overwrites: overwrites })
+        });
+        if (!channel || !channel.id) return null;
+        await discordFetch('/channels/' + channel.id + '/messages', {
+            method: 'POST',
+            body: JSON.stringify({
+                content: isDiscordUser ? '<@' + session.id + '>' : '',
+                embeds: [{
+                    title: 'Ticket de Compra #' + id,
+                    color: 0x22c55e,
+                    fields: [
+                        { name: 'Usuario', value: session.username + (isDiscordUser ? ' (' + session.id + ')' : ''), inline: true },
+                        { name: 'Plano', value: planName || '?', inline: true },
+                        { name: 'Valor', value: planPrice || '?', inline: true },
+                        { name: 'Duracao', value: planDuration || '?', inline: true },
+                        { name: 'Pagamento', value: paymentMethod || 'Manual', inline: true },
+                        { name: 'Status', value: 'Pendente de aprovacao', inline: false }
+                    ],
+                    timestamp: new Date().toISOString()
+                }]
+            })
+        });
+        return { channelId: channel.id, guildId };
+    } catch (e) { console.error('Erro criar ticket Discord:', e.message); return null; }
+}
+
 app.get('/api/purchases', adminOnly, async (req, res) => {
     res.json(await db.getPurchases());
 });
@@ -676,6 +730,11 @@ app.post('/api/purchase', auth, async (req, res) => {
     const { planName, planPrice, planTier, planDuration, paymentMethod } = req.body;
     if (!planName) return res.status(400).json({ error: 'Dados incompletos' });
     const id = await db.createPurchase({ userId: session.id, username: session.username, planName, planPrice, planTier, planDuration, paymentMethod: paymentMethod || 'manual' });
+    let ticket = null;
+    try {
+        ticket = await createDiscordTicket({ id, session, planName, planPrice, planDuration, paymentMethod });
+        if (ticket) await db.saveTicketInfo(id, { channelId: ticket.channelId, guildId: ticket.guildId });
+    } catch(e) { console.error('Erro ao criar ticket:', e.message); }
     try {
         const WEBHOOK = process.env.DISCORD_TICKET_WEBHOOK;
         if (WEBHOOK) {
@@ -699,16 +758,36 @@ app.post('/api/purchase', auth, async (req, res) => {
         }
     } catch(e) { console.error('Erro webhook compra:', e.message); }
     logActivity('purchase', 'Compra #' + id + ' - ' + planName + ' (' + (planPrice || '?') + ')', session);
-    res.json({ success: true, id });
+    res.json({ success: true, id, ticketChannelId: ticket ? ticket.channelId : null, ticketGuildId: ticket ? ticket.guildId : null });
 });
 app.post('/api/purchases/:id/approve', adminOnly, async (req, res) => {
-    await db.updatePurchaseStatus(parseInt(req.params.id), 'approved');
-    logActivity('purchase_approve', 'Aprovou compra #' + req.params.id, getSessionSync(req));
+    const id = parseInt(req.params.id);
+    await db.updatePurchaseStatus(id, 'approved');
+    const p = await db.getPurchase(id);
+    if (p && p.ticket_channel_id && DISCORD_BOT_TOKEN) {
+        try {
+            await discordFetch('/channels/' + p.ticket_channel_id + '/messages', {
+                method: 'POST',
+                body: JSON.stringify({ embeds: [{ title: 'Compra #' + id + ' APROVADA', color: 0x22c55e, description: 'Pagamento confirmado! O plano **' + (p.plan_name || '') + '** ja esta ativo. Obrigado!', timestamp: new Date().toISOString() }] })
+            });
+        } catch(e) { console.error('Erro notificar aprovacao:', e.message); }
+    }
+    logActivity('purchase_approve', 'Aprovou compra #' + id, getSessionSync(req));
     res.json({ success: true });
 });
 app.post('/api/purchases/:id/reject', adminOnly, async (req, res) => {
-    await db.updatePurchaseStatus(parseInt(req.params.id), 'rejected');
-    logActivity('purchase_reject', 'Rejeitou compra #' + req.params.id, getSessionSync(req));
+    const id = parseInt(req.params.id);
+    await db.updatePurchaseStatus(id, 'rejected');
+    const p = await db.getPurchase(id);
+    if (p && p.ticket_channel_id && DISCORD_BOT_TOKEN) {
+        try {
+            await discordFetch('/channels/' + p.ticket_channel_id + '/messages', {
+                method: 'POST',
+                body: JSON.stringify({ embeds: [{ title: 'Compra #' + id + ' RECUSADA', color: 0xef4444, description: 'Seu pagamento nao foi confirmado. Se acha que houve erro, abra um novo ticket.', timestamp: new Date().toISOString() }] })
+            });
+        } catch(e) { console.error('Erro notificar rejeicao:', e.message); }
+    }
+    logActivity('purchase_reject', 'Rejeitou compra #' + id, getSessionSync(req));
     res.json({ success: true });
 });
 

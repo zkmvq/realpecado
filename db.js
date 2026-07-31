@@ -50,10 +50,12 @@ async function connectDB() {
                 await pgPool.query('CREATE TABLE IF NOT EXISTS banned (id TEXT PRIMARY KEY, data JSONB)');
                 await pgPool.query('CREATE TABLE IF NOT EXISTS admins (id TEXT PRIMARY KEY)');
                 await pgPool.query('CREATE TABLE IF NOT EXISTS bots (name TEXT PRIMARY KEY, data JSONB)');
-                await pgPool.query('CREATE TABLE IF NOT EXISTS purchases (id SERIAL PRIMARY KEY, user_id TEXT, username TEXT, plan_name TEXT, plan_price TEXT, plan_tier TEXT, plan_duration TEXT, status TEXT DEFAULT \'pending\', created_at TIMESTAMP DEFAULT NOW(), reviewed_at TIMESTAMP)');
+                await pgPool.query('CREATE TABLE IF NOT EXISTS purchases (id SERIAL PRIMARY KEY, user_id TEXT, username TEXT, plan_name TEXT, plan_price TEXT, plan_tier TEXT, plan_duration TEXT, status TEXT DEFAULT \'pending\', created_at TIMESTAMP DEFAULT NOW(), reviewed_at TIMESTAMP, ticket_channel_id TEXT, ticket_guild_id TEXT)');
                 await pgPool.query('CREATE TABLE IF NOT EXISTS databases (id SERIAL PRIMARY KEY, user_id TEXT NOT NULL, db_type TEXT NOT NULL, db_name TEXT NOT NULL, db_user TEXT NOT NULL, db_password TEXT NOT NULL, db_host TEXT DEFAULT \'localhost\', db_port INTEGER DEFAULT 5432, status TEXT DEFAULT \'active\', created_at TIMESTAMP DEFAULT NOW())');
                 await pgPool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS auto_start BOOLEAN DEFAULT false');
                 await pgPool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS language TEXT DEFAULT NULL');
+                await pgPool.query('ALTER TABLE purchases ADD COLUMN IF NOT EXISTS ticket_channel_id TEXT');
+                await pgPool.query('ALTER TABLE purchases ADD COLUMN IF NOT EXISTS ticket_guild_id TEXT');
                 await pgPool.query('CREATE INDEX IF NOT EXISTS idx_purchases_user_id ON purchases(user_id)');
                 await pgPool.query('CREATE INDEX IF NOT EXISTS idx_purchases_status ON purchases(status)');
                 await pgPool.query('CREATE INDEX IF NOT EXISTS idx_databases_user_id ON databases(user_id)');
@@ -220,6 +222,21 @@ async function updatePurchaseStatus(id, status) {
 async function getUserPurchases(userId) {
     try { if (dbType === 'pg') return (await pgPool.query('SELECT * FROM purchases WHERE user_id=$1 ORDER BY created_at DESC', [userId])).rows; if (dbType === 'json') return Object.values(jsonStore('purchases').data).filter(v => typeof v === 'object' && v.user_id === userId).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); } catch (e) { console.error('getUserPurchases error:', e.message); }
     return [];
+}
+async function getPurchase(id) {
+    id = parseInt(id);
+    try {
+        if (dbType === 'pg') return (await pgPool.query('SELECT * FROM purchases WHERE id=$1', [id])).rows[0] || null;
+        if (dbType === 'json') { const p = jsonStore('purchases').data[id]; return p && typeof p === 'object' ? p : null; }
+    } catch (e) { console.error('getPurchase error:', e.message); }
+    return null;
+}
+async function saveTicketInfo(id, info) {
+    id = parseInt(id);
+    try {
+        if (dbType === 'pg') await pgPool.query('UPDATE purchases SET ticket_channel_id=$2, ticket_guild_id=$3 WHERE id=$1', [id, info.channelId || null, info.guildId || null]);
+        if (dbType === 'json') { const s = jsonStore('purchases'); if (s.data[id]) { s.data[id].ticket_channel_id = info.channelId || null; s.data[id].ticket_guild_id = info.guildId || null; jsonSave('purchases'); } }
+    } catch (e) { console.error('saveTicketInfo error:', e.message); }
 }
 
 async function createDatabase(data) {
