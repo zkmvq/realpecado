@@ -1,0 +1,5 @@
+node_modules/
+uploads/
+bots/
+data/
+.env
