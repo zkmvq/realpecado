@@ -362,14 +362,21 @@ body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); 
 
 .plans-comparison { display:flex; flex-wrap:wrap; gap:22px; justify-content:center; padding:8px 8px 40px; align-items:stretch; }
 
-.plan-card { position:relative; width:280px; padding:34px 26px 26px; border-radius:24px; display:flex; flex-direction:column; transition:transform .25s ease, box-shadow .25s ease, border-color .25s ease; overflow:hidden; background:#141417; border:1px solid rgba(255,255,255,.08); }
-.plan-card::before { content:''; position:absolute; top:-80px; right:-80px; width:220px; height:220px; border-radius:50%; background:radial-gradient(circle, color-mix(in srgb, var(--tier,#dc2626) 16%, transparent) 0%, transparent 70%); z-index:0; pointer-events:none; }
+.plan-card { position:relative; width:280px; padding:34px 26px 26px; border-radius:24px; display:flex; flex-direction:column; transition:transform .35s cubic-bezier(.34,1.56,.64,1), box-shadow .3s ease; overflow:hidden; background:#141417; border:1px solid rgba(255,255,255,.08); }
+.plan-card::before { content:''; position:absolute; top:-80px; right:-80px; width:220px; height:220px; border-radius:50%; background:radial-gradient(circle, color-mix(in srgb, var(--tier,#dc2626) 16%, transparent) 0%, transparent 70%); z-index:0; pointer-events:none; transition:opacity .3s ease, transform .3s ease; }
 .plan-card > * { position:relative; z-index:1; }
 
 .plan-card.featured { border:1px solid transparent; background:linear-gradient(#151518,#151518) padding-box, linear-gradient(135deg,var(--tier,#dc2626),color-mix(in srgb, var(--tier,#dc2626) 45%, #000)) border-box; box-shadow:0 24px 60px -24px color-mix(in srgb, var(--tier,#dc2626) 35%, transparent); }
 .plan-card.featured::before { background:radial-gradient(circle, color-mix(in srgb, var(--tier,#dc2626) 26%, transparent) 0%, transparent 70%); }
 
-.plan-card:hover { transform:translateY(-5px); box-shadow:0 26px 60px -26px color-mix(in srgb, var(--tier,#dc2626) 30%, transparent); }
+@property --plan-angle { syntax:'<angle>'; initial-value:0deg; inherits:false; }
+
+.plan-card:hover { transform:translateY(-6px) scale(1.035); box-shadow:0 30px 70px -26px color-mix(in srgb, var(--tier,#dc2626) 40%, transparent); }
+.plan-card:hover::before { opacity:1; transform:scale(1.25); }
+
+.plan-card::after { content:''; position:absolute; inset:0; border-radius:inherit; padding:1.5px; background:conic-gradient(from var(--plan-angle), transparent 0deg, transparent 100deg, var(--tier,#dc2626) 150deg, var(--tier,#dc2626) 230deg, transparent 280deg); -webkit-mask:linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite:xor; mask:linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask-composite:exclude; opacity:0; pointer-events:none; transition:opacity .3s ease; animation:plan-aura 3.2s linear infinite; }
+.plan-card:hover::after { opacity:.95; }
+@keyframes plan-aura { to { --plan-angle:360deg; } }
 
 .plan-featured-badge { position:absolute; top:0; left:50%; transform:translate(-50%,-50%); background:linear-gradient(135deg,var(--tier,#dc2626),color-mix(in srgb, var(--tier,#dc2626) 50%, #000)); color:white; font-size:10px; font-weight:800; letter-spacing:1px; text-transform:uppercase; padding:6px 16px; border-radius:20px; z-index:3; box-shadow:0 8px 20px -6px color-mix(in srgb, var(--tier,#dc2626) 60%, transparent); white-space:nowrap; }
 
