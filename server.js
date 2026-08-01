@@ -20,6 +20,7 @@ const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || process.env.I
 const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || 'https://realpecado.up.railway.app/auth/discord/callback';
 const PASSWORD = process.env.PASSWORD || 'admin';
 const OWNER_ID = '1473070694425301205';
+const PLANS_ACCESS_IDS = ['1526570298743197766'];
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
 const DISCORD_TICKET_CATEGORY_ID = process.env.DISCORD_TICKET_CATEGORY_ID || '';
@@ -190,7 +191,7 @@ app.get('/api/me', auth, async (req, res) => {
     const adminStatus = await isAdmin(session);
     if (session.type === 'discord') {
         try { await db.upsertStaff(session.id, { username: session.username, discriminator: session.discriminator || '0', avatar: session.avatar, lastLogin: new Date().toISOString(), $inc: { loginCount: 1 } }); } catch(e) { console.error('Erro upsertStaff em /api/me:', e.message); }
-        res.json({ id: session.id, username: session.username, discriminator: session.discriminator, avatar: session.avatar, banner: session.banner, banner_color: session.banner_color, type: 'discord', isOwner: isOwner(session), isAdmin: adminStatus });
+        res.json({ id: session.id, username: session.username, discriminator: session.discriminator, avatar: session.avatar, banner: session.banner, banner_color: session.banner_color, type: 'discord', isOwner: isOwner(session), isAdmin: adminStatus, canAccessPlans: PLANS_ACCESS_IDS.includes(session.id) });
     } else {
         res.json({ id: '0', username: 'Admin (Senha)', discriminator: '0', avatar: null, banner: null, banner_color: null, type: 'password', isOwner: false, isAdmin: true });
     }
@@ -818,6 +819,21 @@ async function grantDiscordRole(userId, roleId) {
 
 app.get('/api/purchases', adminOnly, async (req, res) => {
     res.json(await db.getPurchases());
+});
+app.get('/api/plans', auth, async (req, res) => {
+    res.json(await db.getPlans());
+});
+app.post('/api/plans', adminOnly, async (req, res) => {
+    const { name, price, duration, tier, features, botsMax, roleId } = req.body;
+    if (!name) return res.status(400).json({ error: 'Nome do plano obrigatorio' });
+    const plan = await db.savePlan({ name, price, duration, tier, features, botsMax, roleId, createdAt: new Date().toISOString() });
+    logActivity('plan', 'Criou plano ' + name, getSessionSync(req));
+    res.json({ success: true, plan });
+});
+app.delete('/api/plans/:id', adminOnly, async (req, res) => {
+    await db.deletePlan(req.params.id);
+    logActivity('plan', 'Removeu plano #' + req.params.id, getSessionSync(req));
+    res.json({ success: true });
 });
 app.get('/api/user/purchases', auth, async (req, res) => {
     res.json(await db.getUserPurchases(req.session.id));

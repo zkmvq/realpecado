@@ -169,6 +169,8 @@ function enterApp() {
     document.getElementById('info-type').textContent = type;
     document.getElementById('profile-banner').src = getBanner(DiscordUser);
 
+    const plansOnly = !!(DiscordUser && DiscordUser.canAccessPlans && !DiscordUser.isOwner && !DiscordUser.isAdmin);
+
     if (DiscordUser && DiscordUser.isAdmin) {
         document.getElementById('btn-staffs').style.display = 'flex';
         loadAutoAnn();
@@ -179,7 +181,16 @@ function enterApp() {
     const annCard = document.getElementById('announcer-card');
     if (annCard) annCard.style.display = (DiscordUser && (DiscordUser.isOwner || DiscordUser.isAdmin)) ? 'block' : 'none';
 
-    if (DiscordUser && DiscordUser.isOwner) {
+    if (plansOnly) {
+        ['btn-dashboard', 'btn-profile', 'btn-discord', 'btn-databases'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+        document.getElementById('btn-planos').style.display = 'flex';
+        const us = document.getElementById('users-section');
+        if (us) us.style.display = 'none';
+        showTab('planos', document.getElementById('btn-planos'));
+    } else if (DiscordUser && DiscordUser.isOwner) {
         document.getElementById('btn-planos').style.display = 'flex';
         document.getElementById('btn-databases').style.display = 'flex';
         document.getElementById('users-section').style.display = 'block';
@@ -1031,9 +1042,17 @@ async function loadActivityLogs() {
 </div>`).join('');
 }
 
-let plans = JSON.parse(localStorage.getItem('lbplans') || '[]');
+let plans = [];
 
-function loadPlans() { const af = document.getElementById('plans-admin-form'); if (af) af.style.display = (DiscordUser && DiscordUser.isAdmin) ? 'block' : 'none'; renderPlans(); }
+async function loadPlans() {
+    try {
+        const data = await apiFetch('/api/plans');
+        if (Array.isArray(data)) plans = data;
+    } catch(e) {}
+    const af = document.getElementById('plans-admin-form');
+    if (af) af.style.display = (DiscordUser && DiscordUser.isAdmin) ? 'block' : 'none';
+    renderPlans();
+}
 
 const PURCHASE_STATUS = { pending: 'Pendente', approved: 'Aprovado', rejected: 'Rejeitado' };
 let allPurchases = [];
@@ -1358,7 +1377,7 @@ async function confirmPurchase() {
     }
 }
 
-function addPlan() {
+async function addPlan() {
     const name = document.getElementById('plan-name').value.trim();
     const price = document.getElementById('plan-price').value.trim();
     const duration = document.getElementById('plan-duration').value.trim();
@@ -1368,25 +1387,30 @@ function addPlan() {
     const roleId = document.getElementById('plan-role-id').value.trim() || null;
     const s = document.getElementById('plan-status');
     if (!name || !price || !duration) { s.textContent = 'Preencha nome, preco e duracao'; s.style.color = '#ef4444'; return; }
-    plans.push({ name, price, duration, tier, features, botsMax, roleId, createdAt: new Date().toISOString() });
-    localStorage.setItem('lbplans', JSON.stringify(plans));
-    document.getElementById('plan-name').value = '';
-    document.getElementById('plan-price').value = '';
-    document.getElementById('plan-duration').value = '';
-    document.getElementById('plan-features').value = '';
-    document.getElementById('plan-bots').value = '';
-    document.getElementById('plan-role-id').value = '';
-    document.getElementById('plan-tier').value = 'bronze';
-    s.textContent = 'Plano criado!'; s.style.color = '#22c55e';
-    setTimeout(() => { s.textContent = ''; }, 2000);
-    renderPlans();
+    const res = await apiFetch('/api/plans', { method: 'POST', body: JSON.stringify({ name, price, duration, tier, features, botsMax, roleId }) });
+    if (res && res.success) {
+        document.getElementById('plan-name').value = '';
+        document.getElementById('plan-price').value = '';
+        document.getElementById('plan-duration').value = '';
+        document.getElementById('plan-features').value = '';
+        document.getElementById('plan-bots').value = '';
+        document.getElementById('plan-role-id').value = '';
+        document.getElementById('plan-tier').value = 'bronze';
+        s.textContent = 'Plano criado!'; s.style.color = '#22c55e';
+        setTimeout(() => { s.textContent = ''; }, 2000);
+        await loadPlans();
+    } else {
+        s.textContent = (res && res.error) || 'Erro ao criar plano'; s.style.color = '#ef4444';
+    }
 }
 
-function deletePlan(i) {
+async function deletePlan(i) {
+    const plan = plans[i];
+    if (!plan || !plan.id) return;
     if (!confirm('Remover este plano?')) return;
-    plans.splice(i, 1);
-    localStorage.setItem('lbplans', JSON.stringify(plans));
-    renderPlans();
+    const res = await apiFetch('/api/plans/' + plan.id, { method: 'DELETE' });
+    if (res && res.success) await loadPlans();
+    else alert('Erro ao remover plano');
 }
 
 // === DATABASES ===

@@ -259,6 +259,31 @@ async function getDatabaseById(id) {
     return null;
 }
 
+function getPlans() {
+    const s = jsonStore('plans');
+    return Object.values(s.data).filter(v => typeof v === 'object' && v.id).sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+}
+function getPlan(id) {
+    const s = jsonStore('plans');
+    return s.data[String(id)] || null;
+}
+function savePlan(data) {
+    const s = jsonStore('plans');
+    let id = data.id;
+    if (!id) {
+        id = (s.data._nextId || 0) + 1;
+        s.data._nextId = id;
+        id = String(id);
+    }
+    s.data[id] = { ...(s.data[id] || {}), ...data, id: String(id), updatedAt: new Date().toISOString() };
+    jsonSave('plans');
+    return s.data[id];
+}
+function deletePlan(id) {
+    const s = jsonStore('plans');
+    if (s.data[String(id)]) { delete s.data[String(id)]; jsonSave('plans'); }
+}
+
 module.exports = {
     connectDB, isUsingDB,
     getSession, saveSession, deleteSession, deleteAllSessions, getAllSessions, cleanOldSessions,
@@ -267,5 +292,6 @@ module.exports = {
     getAdmins, addAdmin, removeAdmin,
     getBots, saveBot, deleteBotDB, setAutoStart,
     createPurchase, getPurchases, updatePurchaseStatus, getUserPurchases, getPurchase, saveTicketInfo,
-    createDatabase, getDatabases, deleteDatabase, resetDbPassword, getDatabaseById
+    createDatabase, getDatabases, deleteDatabase, resetDbPassword, getDatabaseById,
+    getPlans, getPlan, savePlan, deletePlan
 };
