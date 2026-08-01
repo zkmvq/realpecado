@@ -366,12 +366,12 @@ body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); 
 .plan-card::before { content:''; position:absolute; top:-80px; right:-80px; width:220px; height:220px; border-radius:50%; background:radial-gradient(circle, color-mix(in srgb, var(--tier,#dc2626) 16%, transparent) 0%, transparent 70%); z-index:0; pointer-events:none; }
 .plan-card > * { position:relative; z-index:1; }
 
-.plan-card.featured { border:1px solid transparent; background:linear-gradient(#151518,#151518) padding-box, linear-gradient(135deg,var(--tier,#dc2626),#7f1d1d) border-box; box-shadow:0 24px 60px -24px color-mix(in srgb, var(--tier,#dc2626) 35%, transparent); }
+.plan-card.featured { border:1px solid transparent; background:linear-gradient(#151518,#151518) padding-box, linear-gradient(135deg,var(--tier,#dc2626),color-mix(in srgb, var(--tier,#dc2626) 45%, #000)) border-box; box-shadow:0 24px 60px -24px color-mix(in srgb, var(--tier,#dc2626) 35%, transparent); }
 .plan-card.featured::before { background:radial-gradient(circle, color-mix(in srgb, var(--tier,#dc2626) 26%, transparent) 0%, transparent 70%); }
 
 .plan-card:hover { transform:translateY(-5px); box-shadow:0 26px 60px -26px color-mix(in srgb, var(--tier,#dc2626) 30%, transparent); }
 
-.plan-featured-badge { position:absolute; top:0; left:50%; transform:translate(-50%,-50%); background:linear-gradient(135deg,var(--tier,#dc2626),#7f1d1d); color:white; font-size:10px; font-weight:800; letter-spacing:1px; text-transform:uppercase; padding:6px 16px; border-radius:20px; z-index:3; box-shadow:0 8px 20px -6px color-mix(in srgb, var(--tier,#dc2626) 60%, transparent); white-space:nowrap; }
+.plan-featured-badge { position:absolute; top:0; left:50%; transform:translate(-50%,-50%); background:linear-gradient(135deg,var(--tier,#dc2626),color-mix(in srgb, var(--tier,#dc2626) 50%, #000)); color:white; font-size:10px; font-weight:800; letter-spacing:1px; text-transform:uppercase; padding:6px 16px; border-radius:20px; z-index:3; box-shadow:0 8px 20px -6px color-mix(in srgb, var(--tier,#dc2626) 60%, transparent); white-space:nowrap; }
 
 .plan-head { text-align:center; margin-bottom:14px; }
 .plan-name { font-size:18px; font-weight:700; font-family:'Sora','Funnel Display',sans-serif; color:#f8f8f8; letter-spacing:-.2px; }
@@ -389,8 +389,10 @@ body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); 
 .plan-price { font-size:30px; font-weight:800; font-family:'Sora','Funnel Display',sans-serif; color:white; letter-spacing:-.5px; }
 .plan-duration { font-size:13px; color:#6b7280; }
 
-.plan-buy-btn { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:14px 22px; border-radius:12px; border:none; font-size:13.5px; font-weight:700; cursor:pointer; transition:filter .2s, transform .2s, box-shadow .2s; font-family:'Inter',sans-serif; text-transform:uppercase; letter-spacing:.6px; background:linear-gradient(135deg,var(--tier,#dc2626),#991b1b); color:white; }
-.plan-buy-btn:hover { filter:brightness(1.12); transform:translateY(-2px); box-shadow:0 12px 28px -12px var(--tier,#dc2626); }
+.plan-buy-btn { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:14px 22px; border-radius:12px; border:none; font-size:13.5px; font-weight:700; cursor:pointer; transition:filter .2s, transform .2s, box-shadow .2s; font-family:'Inter',sans-serif; text-transform:uppercase; letter-spacing:.6px; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.35); background:linear-gradient(135deg,var(--tier,#dc2626) 0%,color-mix(in srgb, var(--tier,#dc2626) 62%, #000) 100%); box-shadow:0 10px 22px -12px color-mix(in srgb, var(--tier,#dc2626) 70%, transparent), inset 0 1px 0 rgba(255,255,255,.16); }
+.plan-buy-btn.tier-prata, .plan-buy-btn.tier-ouro, .plan-buy-btn.tier-diamante { color:#141417; text-shadow:none; }
+.plan-buy-btn:hover { filter:brightness(1.08); transform:translateY(-2px); box-shadow:0 16px 32px -14px color-mix(in srgb, var(--tier,#dc2626) 85%, transparent); }
+.plan-buy-btn:active { transform:translateY(0); filter:brightness(.95); }
 
 .plan-admin-bar { margin-top:16px; text-align:center; }
 .plan-delete-btn { background:none; border:1px solid rgba(239,68,68,.2); border-radius:8px; color:#71717a; padding:5px 12px; font-size:11px; cursor:pointer; transition:all .15s; font-family:'Inter',sans-serif; }
