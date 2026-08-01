@@ -858,11 +858,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const bg = document.createElement('div');
         bg.id = 'main-bg';
         bg.innerHTML = '<div class="main-grid"></div><div class="main-glow main-glow-1"></div><div class="main-glow main-glow-2"></div><div class="plans-bubbles">'
-            + '<span class="bubble" style="left:12%;width:7px;height:7px;animation-duration:9s;animation-delay:0s"></span>'
-            + '<span class="bubble" style="left:30%;width:4px;height:4px;animation-duration:12s;animation-delay:3.5s"></span>'
-            + '<span class="bubble" style="left:52%;width:8px;height:8px;animation-duration:10s;animation-delay:1.2s"></span>'
-            + '<span class="bubble" style="left:74%;width:5px;height:5px;animation-duration:13s;animation-delay:5.5s"></span>'
-            + '<span class="bubble" style="left:90%;width:6px;height:6px;animation-duration:11s;animation-delay:7s"></span>'
+            + '<span class="bubble" style="left:8%;width:3px;height:3px;animation-duration:16s;animation-delay:0s"></span>'
+            + '<span class="bubble" style="left:18%;width:5px;height:5px;animation-duration:22s;animation-delay:4s"></span>'
+            + '<span class="bubble" style="left:30%;width:2px;height:2px;animation-duration:19s;animation-delay:8s"></span>'
+            + '<span class="bubble" style="left:42%;width:6px;height:6px;animation-duration:25s;animation-delay:2s"></span>'
+            + '<span class="bubble" style="left:53%;width:3px;height:3px;animation-duration:17s;animation-delay:11s"></span>'
+            + '<span class="bubble" style="left:63%;width:4px;height:4px;animation-duration:24s;animation-delay:6s"></span>'
+            + '<span class="bubble" style="left:73%;width:2px;height:2px;animation-duration:20s;animation-delay:13s"></span>'
+            + '<span class="bubble" style="left:84%;width:5px;height:5px;animation-duration:21s;animation-delay:3s"></span>'
+            + '<span class="bubble" style="left:93%;width:3px;height:3px;animation-duration:18s;animation-delay:9s"></span>'
             + '</div>';
         mainArea.prepend(bg);
         mainArea.addEventListener('mousemove', (e) => {
