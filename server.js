@@ -55,6 +55,7 @@ const upload = multer({
 
 let sessions = {};
 let bots = {};
+let lastLogs = {};
 let activityLogs = [];
 let announcements = [];
 let lastAnnouncementId = 0;
@@ -337,6 +338,7 @@ function startBotProcess(name) {
         });
         proc.on('exit', (code, signal) => {
             console.log('Bot ' + name + ' encerrou (codigo=' + code + ' sinal=' + signal + ')');
+            lastLogs[name] = (proc._logs || []).slice(-200);
             if (bots[name] === proc) {
                 delete bots[name];
                 db.saveBot(name, { status: 'stopped', stoppedAt: new Date().toISOString(), exitCode: code });
@@ -344,7 +346,7 @@ function startBotProcess(name) {
         });
         proc.on('error', err => console.error('Erro ao iniciar bot ' + name + ':', err.message));
         bots[name] = proc;
-        db.saveBot(name, { status: 'running', startedAt: new Date().toISOString() });
+        db.saveBot(name, { status: 'running', startedAt: new Date().toISOString(), language: runtime === 'python' ? 'Python' : 'Node.js' });
         db.setAutoStart(name, true);
         return { success: true };
     } catch (e) { return { error: e.message }; }
@@ -680,7 +682,7 @@ app.get('/api/bots/:name/logs', auth, async (req, res) => {
     const admin = await isAdmin(session);
     if (!admin && b.owner !== session.id) return res.status(403).json({ error: 'Sem permissao' });
     const proc = bots[name];
-    const logs = proc ? (proc._logs || []).slice(-200) : [];
+    const logs = proc ? (proc._logs || []).slice(-200) : (lastLogs[name] || []).slice(-200);
     res.json({ logs });
 });
 
