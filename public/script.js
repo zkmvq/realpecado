@@ -171,8 +171,6 @@ function enterApp() {
     document.getElementById('info-type').textContent = type;
     document.getElementById('profile-banner').src = getBanner(DiscordUser);
 
-    const plansOnly = !!(DiscordUser && DiscordUser.canAccessPlans && !DiscordUser.isOwner && !DiscordUser.isAdmin);
-
     if (DiscordUser && DiscordUser.isAdmin) {
         document.getElementById('btn-staffs').style.display = 'flex';
         loadAutoAnn();
@@ -183,22 +181,13 @@ function enterApp() {
     const annCard = document.getElementById('announcer-card');
     if (annCard) annCard.style.display = (DiscordUser && (DiscordUser.isOwner || DiscordUser.isAdmin)) ? 'block' : 'none';
 
-    if (plansOnly) {
-        ['btn-dashboard', 'btn-profile', 'btn-discord', 'btn-databases'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.style.display = 'none';
-        });
-        document.getElementById('btn-planos').style.display = 'flex';
-        const us = document.getElementById('users-section');
-        if (us) us.style.display = 'none';
-        showTab('planos', document.getElementById('btn-planos'));
-    } else if (DiscordUser && DiscordUser.isOwner) {
+    if (DiscordUser && DiscordUser.isOwner) {
         document.getElementById('btn-planos').style.display = 'flex';
         document.getElementById('btn-databases').style.display = 'flex';
         document.getElementById('users-section').style.display = 'block';
         loadUsers();
     } else {
-        document.getElementById('btn-planos').style.display = 'none';
+        document.getElementById('btn-planos').style.display = (DiscordUser && DiscordUser.canAccessPlans) ? 'flex' : 'none';
         document.getElementById('btn-databases').style.display = 'flex';
         document.getElementById('users-section').style.display = 'none';
     }
