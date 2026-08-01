@@ -390,7 +390,14 @@ async function createBot() {
                         : 'Processando ZIP...';
                 }
             };
-            xhr.onload = () => { try { resolve(JSON.parse(xhr.responseText)); } catch(e) { reject(new Error('Resposta invalida')); } };
+            xhr.onload = () => {
+                const text = xhr.responseText || '';
+                try { resolve(JSON.parse(text)); }
+                catch(e) {
+                    const detail = text ? (text.length > 300 ? text.slice(0, 300) + '...' : text) : 'Resposta vazia do servidor';
+                    reject(new Error('Resposta invalida do servidor (HTTP ' + xhr.status + '): ' + detail));
+                }
+            };
             xhr.onerror = () => reject(new Error('Falha na conexao'));
             xhr.timeout = 1800000;
             xhr.ontimeout = () => reject({ name: 'AbortError' });

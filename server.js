@@ -986,6 +986,20 @@ async function sessionCleanup() {
     }
 }
 
+// === ERROR HANDLER ===
+app.use((err, req, res, next) => {
+    if (!res.headersSent) {
+        if (err instanceof multer.MulterError) {
+            const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Arquivo maior que o limite (200MB)' : 'Erro no upload: ' + err.message;
+            return res.status(400).json({ error: msg });
+        }
+        if (err.message === 'Apenas .ZIP') return res.status(400).json({ error: 'Apenas arquivos .ZIP' });
+        console.error('Erro na requisicao:', err);
+        return res.status(500).json({ error: 'Erro interno: ' + err.message });
+    }
+    next(err);
+});
+
 // === STARTUP ===
 async function start() {
     await db.connectDB();
