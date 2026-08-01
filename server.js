@@ -422,7 +422,22 @@ app.get('/api/admin/disk', auth, async (req, res) => {
     if (!(await isAdmin(s))) return res.status(403).json({ error: 'Sem permissao' });
     const persistRoot = path.dirname(BOTS_DIR);
     const dataDir = path.join(persistRoot, 'data');
-    const out = { persist: persistRoot, bots: [], data: [], uploads: [] };
+    const out = { persist: persistRoot, bots: [], data: [], uploads: [], topLevel: [], disk: {} };
+    try {
+        if (fs.statfs) {
+            for (const [label, p] of [['root', '/app'], ['volume', persistRoot]]) {
+                const st = fs.statfsSync(p);
+                out.disk[label] = { freeMB: +((st.bavail * st.bsize) / 1048576).toFixed(1), totalMB: +((st.blocks * st.bsize) / 1048576).toFixed(1) };
+            }
+        }
+    } catch(e) { out.disk.error = e.message; }
+    if (fs.existsSync(persistRoot)) {
+        for (const name of fs.readdirSync(persistRoot)) {
+            const p = path.join(persistRoot, name);
+            try { if (fs.statSync(p).isDirectory()) out.topLevel.push({ name, sizeMB: +(dirSizeBytes(p) / 1048576).toFixed(2) }); } catch(e) {}
+        }
+        out.topLevel.sort((a, b) => b.sizeMB - a.sizeMB);
+    }
     if (fs.existsSync(BOTS_DIR)) {
         for (const name of fs.readdirSync(BOTS_DIR)) {
             const p = path.join(BOTS_DIR, name);
@@ -443,6 +458,7 @@ app.get('/api/admin/disk', auth, async (req, res) => {
     }
     out.bots.sort((a, b) => b.sizeMB - a.sizeMB);
     out.data.sort((a, b) => b.sizeMB - a.sizeMB);
+    out.uploads = out.uploads.filter(u => u.sizeMB > 0).sort((a, b) => b.sizeMB - a.sizeMB);
     res.json(out);
 });
 
