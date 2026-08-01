@@ -462,13 +462,34 @@ app.get('/api/admin/disk', auth, async (req, res) => {
     res.json(out);
 });
 
+app.post('/api/admin/cleanup', auth, async (req, res) => {
+    const s = req.session;
+    if (!(await isAdmin(s))) return res.status(403).json({ error: 'Sem permissao' });
+    const removed = [];
+    let freedMB = 0;
+    if (fs.existsSync(UPLOADS_DIR)) {
+        for (const f of fs.readdirSync(UPLOADS_DIR)) {
+            const p = path.join(UPLOADS_DIR, f);
+            try {
+                if (fs.statSync(p).isFile()) {
+                    freedMB += fs.statSync(p).size / 1048576;
+                    fs.unlinkSync(p);
+                    removed.push(f);
+                }
+            } catch(e) {}
+        }
+    }
+    logActivity('cleanup', 'Limpou ' + removed.length + ' uploads temporarios (' + freedMB.toFixed(1) + 'MB)', s);
+    res.json({ success: true, removed: removed.length, freedMB: +freedMB.toFixed(2) });
+});
+
 app.post('/api/bots', auth, upload.single('file'), async (req, res) => {
     const session = req.session;
     const { name } = req.body;
-    if (!name || typeof name !== 'string' || !name.match(/^[a-zA-Z0-9_\-]{2,50}$/)) return res.status(400).json({ error: 'Nome invalido' });
+    if (!name || typeof name !== 'string' || !name.match(/^[a-zA-Z0-9_\-]{2,50}$/)) { try { if (req.file) fs.unlinkSync(req.file.path); } catch(e2) {} return res.status(400).json({ error: 'Nome invalido' }); }
     if (!req.file) return res.status(400).json({ error: 'Arquivo .ZIP necessario' });
     const botDir = getBotPath(name);
-    if (fs.existsSync(botDir)) return res.status(409).json({ error: 'Bot ja existe' });
+    if (fs.existsSync(botDir)) { try { fs.unlinkSync(req.file.path); } catch(e2) {} return res.status(409).json({ error: 'Bot ja existe' }); }
     try {
         const zipPath = req.file.path;
         const destDir = botDir;
