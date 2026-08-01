@@ -667,8 +667,6 @@ app.post('/api/bots/:name/files/write', auth, async (req, res) => {
     if (typeof relPath !== 'string' || relPath.includes('..')) return res.status(400).json({ error: 'Caminho invalido' });
     const fp = safeBotPath(name, relPath);
     if (!fp) return res.status(400).json({ error: 'Caminho invalido' });
-    const base = path.resolve(getBotPath(name));
-    if (path.dirname(fp) === base) return res.status(403).json({ error: 'Nao pode alterar arquivos na raiz do bot' });
     if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Arquivo nao encontrado' });
     if (!fs.statSync(fp).isFile()) return res.status(400).json({ error: 'Nao e um arquivo' });
     if (typeof content !== 'string' || content.length > 2 * 1024 * 1024) return res.status(400).json({ error: 'Conteudo invalido' });

@@ -557,13 +557,26 @@ async function filesSave() {
     const content = document.getElementById('files-editor-content').value;
     btn.disabled = true;
     btn.innerHTML = 'Salvando...';
-    const res = await apiFetch(`/api/bots/${encodeURIComponent(currentFilesBot)}/files/write`, {
+    const url = `/api/bots/${encodeURIComponent(currentFilesBot)}/files/write`;
+    let res = await apiFetch(url, {
         method: 'POST',
         body: JSON.stringify({ path: currentFilesEditorPath, content })
     });
+    if (!res) {
+        try {
+            const r = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: currentFilesEditorPath, content }),
+                credentials: 'include'
+            });
+            const body = await r.json();
+            if (body && body.error) res = body;
+        } catch(e) {}
+    }
     btn.disabled = false;
     btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Salvar';
-    alert(res && res.success ? 'Arquivo salvo!' : (res && res.error ? res.error : 'Erro ao salvar'));
+    alert(res && res.success ? 'Arquivo salvo!' : (res && res.error ? res.error : 'Erro ao salvar arquivo'));
 }
 function filesCloseEditor() { document.getElementById('files-editor').style.display = 'none'; currentFilesEditorPath = null; }
 async function filesDelete(p, isDir) {
