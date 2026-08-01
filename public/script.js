@@ -11,14 +11,30 @@ let announcerInterval = null;
 function startStaffsRefresh() { stopStaffsRefresh(); loadStaffs(); staffsInterval = setInterval(loadStaffs, 3000); activityInterval = setInterval(loadActivityLogs, 10000); purchasesInterval = setInterval(() => { const ps = document.getElementById('purchases-section'); if (ps && ps.style.display !== 'none') loadPurchases(); }, 8000); }
 function stopStaffsRefresh() { if (staffsInterval) { clearInterval(staffsInterval); staffsInterval = null; } if (activityInterval) { clearInterval(activityInterval); activityInterval = null; } if (purchasesInterval) { clearInterval(purchasesInterval); purchasesInterval = null; } }
 
+let lastApiError = null;
+
 async function apiFetch(url, options = {}) {
+    lastApiError = null;
     const headers = { 'Content-Type': 'application/json', ...options.headers };
     const storedPass = sessionStorage.getItem('lbpass');
     if (storedPass) headers['X-Auth-Password'] = storedPass;
     options.headers = headers;
-    const res = await fetch(url, options);
-    if (res.status === 401 || res.status === 403) return null;
-    if (!res.ok) return null;
+    let res;
+    try {
+        res = await fetch(url, options);
+    } catch(e) {
+        lastApiError = 'Falha na conexao com o servidor';
+        return null;
+    }
+    if (res.status === 401 || res.status === 403) {
+        try { const j = await res.json(); if (j && j.error) lastApiError = j.error; } catch(e) {}
+        return null;
+    }
+    if (!res.ok) {
+        try { const j = await res.json(); if (j && j.error) lastApiError = j.error; } catch(e) {}
+        if (!lastApiError) lastApiError = 'Erro no servidor (HTTP ' + res.status + ')';
+        return null;
+    }
     return res.json();
 }
 
@@ -425,7 +441,7 @@ async function startBot(n) {
     if (btn) { btn.disabled = true; btn.textContent = 'Ligando...'; }
     try {
         const res = await apiFetch(`/api/bots/${encodeURIComponent(n)}/start`,{method:'POST'});
-        if (!res || !res.success) alert('Erro ao ligar o bot: ' + (res && res.error ? res.error : 'sem permissao ou bot nao encontrado'));
+        if (!res || !res.success) alert('Erro ao ligar o bot: ' + (res && res.error ? res.error : (lastApiError || 'sem permissao ou bot nao encontrado')));
     } catch(e) { alert('Erro ao ligar o bot: ' + e.message); }
     if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>Ligar'; }
     refreshBots();

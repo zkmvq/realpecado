@@ -292,23 +292,36 @@ function getBotStatus(name) {
 
 function startBotProcess(name) {
     const botPath = getBotPath(name);
-    const mainFile = findMainFile(botPath);
-    if (!mainFile) return { error: 'Nenhum entry point encontrado' };
+    const found = findMainFile(botPath);
+    if (!found) return { error: 'Nenhum entry point encontrado (nao achei index.js/main.js ou main.py/run.py)' };
+    const mainFile = found.file;
+    const runtime = found.runtime;
     const runDir = path.dirname(mainFile);
     try {
-        if (fs.existsSync(path.join(runDir, 'package.json')) && !fs.existsSync(path.join(runDir, 'node_modules'))) {
-            try {
-                execSync('npm install --prefer-offline', { cwd: runDir, stdio: 'pipe', timeout: 600000 });
-            } catch(e) { return { error: 'Erro ao instalar dependencias: ' + e.message }; }
+        if (runtime === 'node') {
+            if (fs.existsSync(path.join(runDir, 'package.json')) && !fs.existsSync(path.join(runDir, 'node_modules'))) {
+                try {
+                    execSync('npm install --prefer-offline', { cwd: runDir, stdio: 'pipe', timeout: 600000 });
+                } catch(e) { return { error: 'Erro ao instalar dependencias: ' + e.message }; }
+            }
+        } else {
+            const py = getPythonBin();
+            if (!py) return { error: 'Python nao encontrado no servidor' };
+            if (fs.existsSync(path.join(runDir, 'requirements.txt'))) {
+                try {
+                    execSync(py + ' -m pip install -r requirements.txt --quiet', { cwd: runDir, stdio: 'pipe', timeout: 600000 });
+                } catch(e) { return { error: 'Erro ao instalar dependencias python: ' + e.message }; }
+            }
         }
         if (bots[name]) {
             try { bots[name].kill(); } catch(e) {}
             delete bots[name];
         }
-        const proc = spawn('node', [mainFile], {
+        const runner = runtime === 'node' ? 'node' : getPythonBin();
+        const proc = spawn(runner, [mainFile], {
             cwd: runDir,
             stdio: ['pipe', 'pipe', 'pipe'],
-            env: { ...process.env, NODE_PATH: path.join(runDir, 'node_modules') }
+            env: runtime === 'node' ? { ...process.env, NODE_PATH: path.join(runDir, 'node_modules') } : process.env
         });
         proc._startedAt = Date.now();
         proc._name = name;
@@ -351,17 +364,33 @@ function stopBotProcess(name) {
 function findMainFile(dir) {
     const pkgPath = path.join(dir, 'package.json');
     if (fs.existsSync(pkgPath)) {
-        try { const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')); if (pkg.main && fs.existsSync(path.join(dir, pkg.main))) return path.join(dir, pkg.main); } catch(e) {}
+        try { const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')); if (pkg.main && fs.existsSync(path.join(dir, pkg.main))) return { file: path.join(dir, pkg.main), runtime: 'node' }; } catch(e) {}
     }
     for (const f of ['index.js', 'bot.js', 'main.js', 'app.js', 'server.js']) {
-        if (fs.existsSync(path.join(dir, f))) return path.join(dir, f);
+        if (fs.existsSync(path.join(dir, f))) return { file: path.join(dir, f), runtime: 'node' };
     }
-    const files = fs.readdirSync(dir).filter(f => f.endsWith('.js'));
-    if (files.length) return path.join(dir, files[0]);
-    const subDirs = fs.readdirSync(dir).filter(f => { try { return fs.statSync(path.join(dir, f)).isDirectory() && !f.startsWith('.') && f !== 'node_modules'; } catch(e) { return false; } });
+    for (const f of ['main.py', 'bot.py', 'run.py', 'index.py', 'app.py']) {
+        if (fs.existsSync(path.join(dir, f))) return { file: path.join(dir, f), runtime: 'python' };
+    }
+    let files = [];
+    try { files = fs.readdirSync(dir); } catch(e) { return null; }
+    const jsFiles = files.filter(f => f.endsWith('.js'));
+    if (jsFiles.length) return { file: path.join(dir, jsFiles[0]), runtime: 'node' };
+    const pyFiles = files.filter(f => f.endsWith('.py'));
+    if (pyFiles.length) return { file: path.join(dir, pyFiles[0]), runtime: 'python' };
+    const subDirs = files.filter(f => { try { return fs.statSync(path.join(dir, f)).isDirectory() && !f.startsWith('.') && f !== 'node_modules'; } catch(e) { return false; } });
     for (const sub of subDirs) {
         const found = findMainFile(path.join(dir, sub));
         if (found) return found;
+    }
+    return null;
+}
+
+let PYTHON_BIN = null;
+function getPythonBin() {
+    if (PYTHON_BIN) return PYTHON_BIN;
+    for (const bin of ['python3', 'python']) {
+        try { execSync(bin + ' --version', { stdio: 'pipe', timeout: 10000 }); PYTHON_BIN = bin; return bin; } catch(e) {}
     }
     return null;
 }
@@ -560,11 +589,12 @@ app.post('/api/bots', auth, uploadLimiter, checkDiskSpace, upload.single('file')
             }
         } catch(e) {}
         const pkgPath = path.join(botDir, 'package.json');
-        let lang = 'Node.js';
+        const detected = findMainFile(botDir);
+        let lang = detected && detected.runtime === 'python' ? 'Python' : 'Node.js';
         await db.saveBot(name, { owner: session.id, language: lang, status: 'installing', createdAt: new Date().toISOString() });
         res.json({ success: true });
         logActivity('bot_create', 'Criou bot ' + name, session);
-        if (fs.existsSync(pkgPath)) {
+        if (fs.existsSync(pkgPath) && lang !== 'Python') {
             try {
                 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
                 const deps = { ...pkg.dependencies, ...pkg.devDependencies };
