@@ -27,6 +27,15 @@ const DISCORD_TICKET_CATEGORY_ID = process.env.DISCORD_TICKET_CATEGORY_ID || '';
 const DISCORD_API = 'https://discord.com/api/v10';
 
 app.use(morgan('short'));
+
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; media-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+    next();
+});
 app.use(express.json({ limit: '600mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/public', express.static(path.join(__dirname, 'public')));
@@ -60,6 +69,11 @@ const BRUTE_WINDOW = 30 * 60 * 1000;
 const loginLimiter = rateLimit({
     windowMs: 60 * 1000, max: 10,
     message: { error: 'Muitas tentativas. Aguarde.' }
+});
+
+const uploadLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, max: 20,
+    message: { error: 'Muitos uploads de bot. Aguarde um pouco.' }
 });
 
 function checkBruteForce(ip) {
@@ -484,6 +498,26 @@ app.post('/api/admin/cleanup', auth, async (req, res) => {
     res.json({ success: true, removed: removed.length, freedMB: +freedMB.toFixed(2) });
 });
 
+function cleanupStaleUploads() {
+    try {
+        if (!fs.existsSync(UPLOADS_DIR)) return;
+        const now = Date.now();
+        let freedMB = 0, removed = 0;
+        for (const f of fs.readdirSync(UPLOADS_DIR)) {
+            const p = path.join(UPLOADS_DIR, f);
+            try {
+                const st = fs.statSync(p);
+                if (st.isFile() && now - st.mtimeMs > 60 * 60 * 1000) {
+                    freedMB += st.size / 1048576;
+                    fs.unlinkSync(p);
+                    removed++;
+                }
+            } catch(e) {}
+        }
+        if (removed > 0) logActivity('cleanup', 'Auto-cleanup: removeu ' + removed + ' uploads antigos (' + freedMB.toFixed(1) + 'MB)', { id: 'system', username: 'Sistema' });
+    } catch(e) {}
+}
+
 function checkDiskSpace(req, res, next) {
     try {
         if (fs.statfs) {
@@ -495,7 +529,7 @@ function checkDiskSpace(req, res, next) {
     next();
 }
 
-app.post('/api/bots', auth, checkDiskSpace, upload.single('file'), async (req, res) => {
+app.post('/api/bots', auth, uploadLimiter, checkDiskSpace, upload.single('file'), async (req, res) => {
     const session = req.session;
     const { name } = req.body;
     if (!name || typeof name !== 'string' || !name.match(/^[a-zA-Z0-9_\-]{2,50}$/)) { try { if (req.file) fs.unlinkSync(req.file.path); } catch(e2) {} return res.status(400).json({ error: 'Nome invalido' }); }
@@ -1110,6 +1144,8 @@ async function start() {
     await startBotsFromDB();
     loadAutoAnnConfig();
     setInterval(sessionCleanup, 3600000);
+    cleanupStaleUploads();
+    setInterval(cleanupStaleUploads, 30 * 60 * 1000);
     setInterval(() => {
         for (const [name, proc] of Object.entries(bots)) {
             if (proc.exitCode !== null) {
