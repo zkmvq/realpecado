@@ -1184,30 +1184,37 @@ const TIER_ICONS = {
 const TIER_NAMES = { bronze: 'Bronze', prata: 'Prata', ouro: 'Ouro', diamante: 'Diamante' };
 const TIER_COLORS = { bronze: '#cd7f32', prata: '#c0c0c0', ouro: '#ffd700', diamante: '#00c8ff' };
 
+let _featuredPlanIdx = -1;
+
 function renderPlans() {
     const c = document.getElementById('plans-list');
     if (!c) return;
-    if (!plans.length) { c.innerHTML = '<p class="empty">Nenhum plano criado ainda</p>'; return; }
+    if (!plans.length) {
+        c.innerHTML = '<p class="empty">Nenhum plano criado ainda</p>';
+        const cmp = document.getElementById('plans-compare');
+        if (cmp) cmp.innerHTML = '';
+        return;
+    }
     const isAdmin = DiscordUser && DiscordUser.isAdmin;
-    let featuredIdx = plans.length >= 3 ? 1 : (plans.length >= 2 ? 0 : -1);
+    _featuredPlanIdx = plans.length >= 3 ? Math.floor(plans.length / 2) : -1;
 
     c.innerHTML = plans.map((p, i) => {
         const tier = p.tier || 'bronze';
-        const color = TIER_COLORS[tier] || '#5865f2';
+        const color = TIER_COLORS[tier] || '#dc2626';
         const features = (p.features || '').split(',').map(f => f.trim()).filter(Boolean);
         const botsMax = p.botsMax || '∞';
-        const isFeat = i === featuredIdx;
+        const isFeat = i === _featuredPlanIdx;
+        const spec = features[0] || (String(botsMax) + ' bot' + (botsMax == 1 ? '' : 's'));
+        const rest = features.slice(1);
         return `
 <div class="plan-card tier-${tier} ${isFeat ? 'featured' : ''}" style="--tier:${color}">
-  ${isFeat ? '<div class="plan-featured-badge">Mais Popular</div>' : ''}
-  <div class="plan-top">
-    <div class="plan-tier-icon" style="color:${color};border-color:${color}40;background:${color}12">${TIER_ICONS[tier]}</div>
-    <span class="plan-tier-name" style="color:${color}">${TIER_NAMES[tier] || tier}</span>
+  ${isFeat ? '<div class="plan-featured-badge">Mais Vendido</div>' : ''}
+  <div class="plan-head">
+    <div class="plan-name">${esc(p.name)}</div>
   </div>
-  <div class="plan-name tier-${tier}">${esc(p.name)}</div>
-  <div class="plan-sub">Hospedagem para <strong>${esc(String(botsMax))}</strong> bot${botsMax == 1 ? '' : 's'}</div>
+  <div class="plan-spec" style="color:${color}">${esc(spec)}</div>
   <ul class="plan-features">
-    ${features.map(f => `<li>
+    ${rest.map(f => `<li>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
       ${esc(f)}
     </li>`).join('')}
@@ -1229,6 +1236,59 @@ function renderPlans() {
   ${isAdmin ? `<div class="plan-admin-bar"><button class="plan-delete-btn" onclick="deletePlan(${i})">Remover plano</button></div>` : ''}
 </div>`;
     }).join('');
+
+    renderPlansCompare();
+}
+
+function renderPlansCompare() {
+    const box = document.getElementById('plans-compare');
+    if (!box) return;
+    if (!plans.length) { box.innerHTML = ''; return; }
+
+    const standard = [
+        'Monitoramento em tempo real',
+        'Explorador de arquivos',
+        'Console interativo',
+        'Auto reinicializacao',
+        'Protecao Anti-DDoS',
+        'Suporte 24/7'
+    ];
+    const allFeats = [];
+    plans.forEach(p => {
+        (p.features || '').split(',').map(f => f.trim()).filter(Boolean).forEach(f => {
+            if (!allFeats.includes(f)) allFeats.push(f);
+        });
+    });
+
+    const head = `<thead><tr><th>Recursos</th>${plans.map((p, i) =>
+        `<th class="${i === _featuredPlanIdx ? 'cmp-feat' : ''}">${esc(p.name)}</th>`).join('')}</tr></thead>`;
+
+    const botsRow = `<tr class="cmp-bots"><td>Maximo de Bots</td>${plans.map(p =>
+        `<td class="cmp-num">${esc(String(p.botsMax || '∞'))}</td>`).join('')}</tr>`;
+
+    const feats = [...standard, ...allFeats].map(f => {
+        const isStd = standard.includes(f);
+        return `<tr><td>${esc(f)}</td>${plans.map(p => {
+            const ok = isStd || (p.features || '').toLowerCase().split(',').map(x => x.trim()).includes(f.toLowerCase());
+            return ok
+                ? `<td class="cmp-yes"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></td>`
+                : `<td class="cmp-no">-</td>`;
+        }).join('')}</tr>`;
+    }).join('');
+
+    box.innerHTML = `
+    <div class="plans-compare-head">
+      <h2>Compare os planos</h2>
+    </div>
+    <div class="cmp-scroll">
+      <table class="cmp-table">
+        ${head}
+        <tbody>
+          ${botsRow}
+          ${feats}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 function openCheckoutByIndex(idx) {
