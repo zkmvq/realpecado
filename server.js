@@ -484,7 +484,18 @@ app.post('/api/admin/cleanup', auth, async (req, res) => {
     res.json({ success: true, removed: removed.length, freedMB: +freedMB.toFixed(2) });
 });
 
-app.post('/api/bots', auth, upload.single('file'), async (req, res) => {
+function checkDiskSpace(req, res, next) {
+    try {
+        if (fs.statfs) {
+            const st = fs.statfsSync(UPLOADS_DIR);
+            const freeMB = (st.bavail * st.bsize) / 1048576;
+            if (freeMB < 25) return res.status(507).json({ error: 'Espaco em disco insuficiente no servidor' });
+        }
+    } catch(e) {}
+    next();
+}
+
+app.post('/api/bots', auth, checkDiskSpace, upload.single('file'), async (req, res) => {
     const session = req.session;
     const { name } = req.body;
     if (!name || typeof name !== 'string' || !name.match(/^[a-zA-Z0-9_\-]{2,50}$/)) { try { if (req.file) fs.unlinkSync(req.file.path); } catch(e2) {} return res.status(400).json({ error: 'Nome invalido' }); }
