@@ -27,6 +27,8 @@ function showTab(tab, btn) {
     document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(`tab-${tab}`).classList.add('active');
     btn.classList.add('active');
+    const mainArea = document.querySelector('.main-area');
+    if (mainArea) mainArea.classList.toggle('plans-bg', tab === 'planos');
     if (tab === 'staffs' && DiscordUser && DiscordUser.isAdmin) {
         loadStaffs(); startStaffsRefresh(); loadActivityLogs();
         document.getElementById('purchases-section').style.display = 'block';
@@ -852,7 +854,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (mainArea && !document.getElementById('main-bg')) {
         const bg = document.createElement('div');
         bg.id = 'main-bg';
-        bg.innerHTML = '<div class="main-grid"></div><div class="main-glow main-glow-1"></div><div class="main-glow main-glow-2"></div>';
+        bg.innerHTML = '<div class="main-grid"></div><div class="main-glow main-glow-1"></div><div class="main-glow main-glow-2"></div><div class="plans-bubbles">'
+            + '<span class="bubble" style="left:12%;width:7px;height:7px;animation-duration:9s;animation-delay:0s"></span>'
+            + '<span class="bubble" style="left:30%;width:4px;height:4px;animation-duration:12s;animation-delay:3.5s"></span>'
+            + '<span class="bubble" style="left:52%;width:8px;height:8px;animation-duration:10s;animation-delay:1.2s"></span>'
+            + '<span class="bubble" style="left:74%;width:5px;height:5px;animation-duration:13s;animation-delay:5.5s"></span>'
+            + '<span class="bubble" style="left:90%;width:6px;height:6px;animation-duration:11s;animation-delay:7s"></span>'
+            + '</div>';
         mainArea.prepend(bg);
         mainArea.addEventListener('mousemove', (e) => {
             const rect = mainArea.getBoundingClientRect();

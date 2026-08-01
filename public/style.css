@@ -84,6 +84,12 @@ body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); 
 .main-glow { position:absolute; border-radius:50%; filter:blur(140px); opacity:.12; transition:transform .4s ease-out; }
 .main-glow-1 { width:700px; height:700px; background:linear-gradient(135deg,#dc2626,#7f1d1d); top:-300px; right:-200px; }
 .main-glow-2 { width:600px; height:600px; background:linear-gradient(135deg,#ef4444,#991b1b); bottom:-300px; left:-100px; }
+.main-area.plans-bg #main-bg { background:radial-gradient(ellipse 70% 55% at 50% 42%, rgba(255,255,255,.055), rgba(255,255,255,0) 65%), #0a0a0d; }
+.main-area.plans-bg .main-grid, .main-area.plans-bg .main-glow { display:none; }
+.plans-bubbles { position:absolute; inset:0; pointer-events:none; display:none; }
+.main-area.plans-bg .plans-bubbles { display:block; }
+.bubble { position:absolute; bottom:-30px; border-radius:50%; background:radial-gradient(circle at 35% 35%, rgba(255,255,255,.95), rgba(255,255,255,.2) 55%, rgba(255,255,255,.05)); box-shadow:0 0 10px rgba(255,255,255,.45); opacity:0; animation:bubble-rise linear infinite; }
+@keyframes bubble-rise { 0% { transform:translateY(0) translateX(0); opacity:0; } 8% { opacity:.85; } 55% { transform:translateY(-45vh) translateX(10px); opacity:.75; } 92% { opacity:.5; } 100% { transform:translateY(-96vh) translateX(-8px); opacity:0; } }
 .main-area::after { content:''; position:fixed; top:0; left:220px; right:0; bottom:0; background:radial-gradient(circle 500px at var(--mx,50%) var(--my,50%), rgba(255,255,255,.05), transparent); pointer-events:none; z-index:0; transition:background .4s ease; }
 .tab-content { display:none; position:relative; z-index:1; animation:fadeIn .3s ease; }
 .tab-content.active { display:block; }
@@ -371,7 +377,7 @@ body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); 
 
 @property --plan-angle { syntax:'<angle>'; initial-value:0deg; inherits:false; }
 
-.plan-card:hover { transform:translateY(-6px) scale(1.035); box-shadow:0 30px 70px -26px color-mix(in srgb, var(--tier,#dc2626) 40%, transparent); }
+.plan-card:hover { transform:translateY(-10px) scale(1.08); z-index:3; box-shadow:0 34px 80px -24px color-mix(in srgb, var(--tier,#dc2626) 45%, transparent); }
 .plan-card:hover::before { opacity:1; transform:scale(1.25); }
 
 .plan-card::after { content:''; position:absolute; inset:0; border-radius:inherit; padding:1.5px; background:conic-gradient(from var(--plan-angle), transparent 0deg, transparent 100deg, var(--tier,#dc2626) 150deg, var(--tier,#dc2626) 230deg, transparent 280deg); -webkit-mask:linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite:xor; mask:linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask-composite:exclude; opacity:0; pointer-events:none; transition:opacity .3s ease; animation:plan-aura 3.2s linear infinite; }
