@@ -536,30 +536,17 @@
             <div id="tab-databases" class="tab-content">
                 <div class="plans-hero">
                     <h1>Bancos de Dados</h1>
-                    <p>Crie e gerencie bancos PostgreSQL reais no servidor.</p>
+                    <p>Escolha um tipo de banco e crie sua conexao real no servidor.</p>
                 </div>
 
                 <div class="card">
                     <div class="card-head">
                         <div>
-                            <h2>Criar Banco</h2>
-                            <p style="font-size:12px;color:var(--muted);margin-top:2px">PostgreSQL 16 — Cria database + usuario reais</p>
+                            <h2>Tipos de Banco</h2>
+                            <p style="font-size:12px;color:var(--muted);margin-top:2px">Catalogo de banco de dados disponiveis</p>
                         </div>
                     </div>
-                    <div class="add-form">
-                        <div class="input-wrap" style="max-width:160px;background:rgba(51,103,145,.08);border:1px solid rgba(51,103,145,.2);cursor:not-allowed">
-                            <span style="font-size:13px;font-weight:600;color:#336791">PostgreSQL</span>
-                        </div>
-                        <div class="input-wrap">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-                            <input type="text" id="db-name" placeholder="Nome do banco (ex: meu_bot_db)" pattern="[a-zA-Z0-9_]+" maxlength="30" />
-                        </div>
-                        <button onclick="createDatabase()" class="btn-create">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-                            Criar Banco Real
-                        </button>
-                    </div>
-                    <p id="db-status" class="form-status"></p>
+                    <div id="db-types-grid" class="db-types-grid"></div>
                 </div>
 
                 <div class="card">
@@ -572,6 +559,25 @@
                     </div>
                     <div id="databases-list" class="databases-grid">
                         <p class="empty">Nenhum banco criado</p>
+                    </div>
+                </div>
+
+                <div class="db-modal" id="db-modal" onclick="if(event.target===this)closeDbModal()">
+                    <div class="db-modal-box">
+                        <div class="db-modal-title">Criar Banco PostgreSQL</div>
+                        <div class="db-modal-sub">Cria um database e usuario reais no servidor.</div>
+                        <div class="input-wrap">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                            <input type="text" id="db-modal-name" placeholder="Nome do banco (ex: meu_bot_db)" pattern="[a-zA-Z0-9_]+" maxlength="30" />
+                        </div>
+                        <p id="db-modal-status" class="form-status"></p>
+                        <div class="db-modal-actions">
+                            <button onclick="closeDbModal()" class="btn-refresh" style="padding:8px 16px">Cancelar</button>
+                            <button onclick="createDatabase()" class="btn-create" style="display:inline-flex">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                                Criar Banco Real
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

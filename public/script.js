@@ -27,8 +27,6 @@ function showTab(tab, btn) {
     document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(`tab-${tab}`).classList.add('active');
     btn.classList.add('active');
-    const mainArea = document.querySelector('.main-area');
-    if (mainArea) mainArea.classList.toggle('plans-bg', tab === 'planos');
     if (tab === 'staffs' && DiscordUser && DiscordUser.isAdmin) {
         loadStaffs(); startStaffsRefresh(); loadActivityLogs();
         document.getElementById('purchases-section').style.display = 'block';
@@ -41,7 +39,7 @@ function showTab(tab, btn) {
     }
     if (tab === 'profile') { loadProfileBots(); renderProfilePlans(); loadProfilePurchases(); loadProfileSubscription(); }
     if (tab === 'planos') { renderPlans(); const af = document.getElementById('plans-admin-form'); if (af) af.style.display = (DiscordUser && DiscordUser.isAdmin) ? 'block' : 'none'; }
-    if (tab === 'databases') { loadDatabases(); }
+    if (tab === 'databases') { renderDbTypes(); loadDatabases(); }
 }
 
 const LANG_COLORS = { 'Node.js': '#22c55e', 'Python': '#3b82f6', 'Java': '#f97316', 'TypeScript': '#3b82f6', 'Rust': '#f97316', 'Go': '#06b6d4', 'C++': '#a855f7', 'PHP': '#8b5cf6' };
@@ -1424,9 +1422,58 @@ async function deletePlan(i) {
 }
 
 // === DATABASES ===
-const DB_ICONS = { postgres: 'PG', mongodb: 'MG', mysql: 'MY', redis: 'RD' };
-const DB_COLORS = { postgres: '#336791', mongodb: '#4DB33D', mysql: '#4479A1', redis: '#DC382D' };
-const DB_PORTS = { postgres: 5432, mongodb: 27017, mysql: 3306, redis: 6379 };
+const DB_ICONS = { postgres: 'PG', mongodb: 'MG', mysql: 'MY', redis: 'RD', mariadb: 'MA', sqlite: 'SQ' };
+const DB_COLORS = { postgres: '#336791', mongodb: '#4DB33D', mysql: '#4479A1', redis: '#DC382D', mariadb: '#A6633C', sqlite: '#8899AA' };
+const DB_PORTS = { postgres: 5432, mongodb: 27017, mysql: 3306, redis: 6379, mariadb: 3306, sqlite: 0 };
+const DB_TYPES = [
+    { id: 'postgres', name: 'PostgreSQL', desc: 'Relacional com transacoes ACID e JSONB', available: true },
+    { id: 'mongodb', name: 'MongoDB', desc: 'NoSQL orientado a documentos', available: false },
+    { id: 'mysql', name: 'MySQL', desc: 'Relacional classico da web', available: false },
+    { id: 'redis', name: 'Redis', desc: 'Chave-valor em memoria para cache e filas', available: false },
+    { id: 'mariadb', name: 'MariaDB', desc: 'Relacional, fork do MySQL', available: false },
+    { id: 'sqlite', name: 'SQLite', desc: 'Banco local em arquivo', available: false }
+];
+
+function renderDbTypes() {
+    const grid = document.getElementById('db-types-grid');
+    if (!grid) return;
+    grid.innerHTML = DB_TYPES.map(t => {
+        const color = DB_COLORS[t.id];
+        return `
+<div class="db-type-card${t.available ? '' : ' soon'}">
+  <div class="db-type-head">
+    <div class="db-type-icon" style="background:${color}20;color:${color};border:1px solid ${color}30">${DB_ICONS[t.id]}</div>
+    <div class="db-type-name">${t.name}</div>
+  </div>
+  <div class="db-type-desc">${t.desc}</div>
+  <div class="db-type-actions">
+    <span class="db-type-status ${t.available ? 'ok' : 'soon'}">${t.available ? 'Disponivel' : 'Em breve'}</span>
+    ${t.available
+        ? `<button class="db-type-create" style="background:${color}" onclick="openDbModal()">Criar</button>`
+        : `<button class="db-type-create" style="background:${color}" disabled>Em breve</button>`}
+  </div>
+</div>`;
+    }).join('');
+}
+
+function openDbModal() {
+    const m = document.getElementById('db-modal');
+    const inp = document.getElementById('db-modal-name');
+    const s = document.getElementById('db-modal-status');
+    if (inp) inp.value = '';
+    if (s) s.textContent = '';
+    if (m) m.classList.add('show');
+    if (inp) setTimeout(() => inp.focus(), 50);
+}
+
+function closeDbModal() {
+    const m = document.getElementById('db-modal');
+    if (m) m.classList.remove('show');
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeDbModal();
+});
 
 let _dbPasswords = {};
 
@@ -1479,8 +1526,8 @@ async function loadDatabases() {
 
 async function createDatabase() {
     const dbType = 'postgres';
-    const dbName = document.getElementById('db-name').value.trim();
-    const s = document.getElementById('db-status');
+    const dbName = document.getElementById('db-modal-name').value.trim();
+    const s = document.getElementById('db-modal-status');
     if (!dbName) { s.textContent = 'Digite o nome do banco'; s.style.color = '#ef4444'; return; }
     s.textContent = 'Criando banco real no PostgreSQL...'; s.style.color = '#f59e0b';
     const data = await apiFetch('/api/databases', { method: 'POST', body: JSON.stringify({ dbType, dbName }) });
@@ -1488,7 +1535,7 @@ async function createDatabase() {
         _dbPasswords[data.db.id] = data.db.db_password;
         s.innerHTML = `Banco "<strong>${esc(data.db.db_name)}</strong>" criado!<br><span style="font-size:11px;color:#a1a1aa">Usuario: ${esc(data.db.db_user)} | Host: ${esc(data.db.db_host)}:${data.db.db_port}</span><br><span style="font-size:11px;color:#f59e0b">Senha: ${esc(data.db.db_password)} (copie agora!)</span>`;
         s.style.color = '#22c55e';
-        document.getElementById('db-name').value = '';
+        document.getElementById('db-modal-name').value = '';
         loadDatabases();
     } else {
         s.textContent = (data && data.error) || 'Erro ao criar banco'; s.style.color = '#ef4444';
