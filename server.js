@@ -309,7 +309,7 @@ function startBotProcess(name) {
             if (!py) return { error: 'Python nao encontrado no servidor' };
             if (fs.existsSync(path.join(runDir, 'requirements.txt'))) {
                 try {
-                    execSync(py + ' -m pip install -r requirements.txt --quiet', { cwd: runDir, stdio: 'pipe', timeout: 600000 });
+                    execSync(py + ' -m pip install -r requirements.txt --quiet --break-system-packages', { cwd: runDir, stdio: 'pipe', timeout: 600000 });
                 } catch(e) { return { error: 'Erro ao instalar dependencias python: ' + e.message }; }
             }
         }
