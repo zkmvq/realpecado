@@ -50,12 +50,13 @@ async function connectDB() {
                 await pgPool.query('CREATE TABLE IF NOT EXISTS banned (id TEXT PRIMARY KEY, data JSONB)');
                 await pgPool.query('CREATE TABLE IF NOT EXISTS admins (id TEXT PRIMARY KEY)');
                 await pgPool.query('CREATE TABLE IF NOT EXISTS bots (name TEXT PRIMARY KEY, data JSONB)');
-                await pgPool.query('CREATE TABLE IF NOT EXISTS purchases (id SERIAL PRIMARY KEY, user_id TEXT, username TEXT, plan_name TEXT, plan_price TEXT, plan_tier TEXT, plan_duration TEXT, status TEXT DEFAULT \'pending\', created_at TIMESTAMP DEFAULT NOW(), reviewed_at TIMESTAMP, ticket_channel_id TEXT, ticket_guild_id TEXT)');
+                await pgPool.query('CREATE TABLE IF NOT EXISTS purchases (id SERIAL PRIMARY KEY, user_id TEXT, username TEXT, plan_name TEXT, plan_price TEXT, plan_tier TEXT, plan_duration TEXT, status TEXT DEFAULT \'pending\', created_at TIMESTAMP DEFAULT NOW(), reviewed_at TIMESTAMP, ticket_channel_id TEXT, ticket_guild_id TEXT, role_id TEXT)');
                 await pgPool.query('CREATE TABLE IF NOT EXISTS databases (id SERIAL PRIMARY KEY, user_id TEXT NOT NULL, db_type TEXT NOT NULL, db_name TEXT NOT NULL, db_user TEXT NOT NULL, db_password TEXT NOT NULL, db_host TEXT DEFAULT \'localhost\', db_port INTEGER DEFAULT 5432, status TEXT DEFAULT \'active\', created_at TIMESTAMP DEFAULT NOW())');
                 await pgPool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS auto_start BOOLEAN DEFAULT false');
                 await pgPool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS language TEXT DEFAULT NULL');
                 await pgPool.query('ALTER TABLE purchases ADD COLUMN IF NOT EXISTS ticket_channel_id TEXT');
                 await pgPool.query('ALTER TABLE purchases ADD COLUMN IF NOT EXISTS ticket_guild_id TEXT');
+                await pgPool.query('ALTER TABLE purchases ADD COLUMN IF NOT EXISTS role_id TEXT');
                 await pgPool.query('CREATE INDEX IF NOT EXISTS idx_purchases_user_id ON purchases(user_id)');
                 await pgPool.query('CREATE INDEX IF NOT EXISTS idx_purchases_status ON purchases(status)');
                 await pgPool.query('CREATE INDEX IF NOT EXISTS idx_databases_user_id ON databases(user_id)');
@@ -205,8 +206,8 @@ async function deleteBotDB(name) {
 }
 
 async function createPurchase(data) {
-    try { if (dbType === 'pg') { const r = await pgPool.query('INSERT INTO purchases (user_id, username, plan_name, plan_price, plan_tier, plan_duration) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id', [data.userId, data.username, data.planName, data.planPrice, data.planTier, data.planDuration]); return r.rows[0].id; } } catch (e) { console.error('createPurchase error:', e.message); }
-    if (dbType === 'json') { const s = jsonStore('purchases'); const id = (s.data._nextId || 0) + 1; s.data._nextId = id; s.data[id] = { id, user_id: data.userId, username: data.username, plan_name: data.planName, plan_price: data.planPrice, plan_tier: data.planTier, plan_duration: data.planDuration, status: 'pending', created_at: new Date().toISOString() }; jsonSave('purchases'); return id; }
+    try { if (dbType === 'pg') { const r = await pgPool.query('INSERT INTO purchases (user_id, username, plan_name, plan_price, plan_tier, plan_duration, role_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id', [data.userId, data.username, data.planName, data.planPrice, data.planTier, data.planDuration, data.roleId || null]); return r.rows[0].id; } } catch (e) { console.error('createPurchase error:', e.message); }
+    if (dbType === 'json') { const s = jsonStore('purchases'); const id = (s.data._nextId || 0) + 1; s.data._nextId = id; s.data[id] = { id, user_id: data.userId, username: data.username, plan_name: data.planName, plan_price: data.planPrice, plan_tier: data.planTier, plan_duration: data.planDuration, role_id: data.roleId || null, status: 'pending', created_at: new Date().toISOString() }; jsonSave('purchases'); return id; }
     return Date.now();
 }
 async function getPurchases(status) {
@@ -265,6 +266,6 @@ module.exports = {
     getBanned, addBanned, removeBanned, isBanned,
     getAdmins, addAdmin, removeAdmin,
     getBots, saveBot, deleteBotDB, setAutoStart,
-    createPurchase, getPurchases, updatePurchaseStatus, getUserPurchases,
+    createPurchase, getPurchases, updatePurchaseStatus, getUserPurchases, getPurchase, saveTicketInfo,
     createDatabase, getDatabases, deleteDatabase, resetDbPassword, getDatabaseById
 };

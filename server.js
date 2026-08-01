@@ -719,6 +719,25 @@ async function createDiscordTicket({ id, session, planName, planPrice, planDurat
     } catch (e) { console.error('Erro criar ticket Discord:', e.message); return null; }
 }
 
+async function grantDiscordRole(userId, roleId) {
+    if (!DISCORD_BOT_TOKEN || !roleId || !userId) return { ok: false, reason: 'sem-config' };
+    if (!/^\d+$/.test(String(userId)) || !/^\d+$/.test(String(roleId))) return { ok: false, reason: 'id-invalido' };
+    try {
+        const guilds = await discordFetch('/users/@me/guilds');
+        if (!guilds || !guilds.length) return { ok: false, reason: 'sem-servidor' };
+        for (const g of guilds) {
+            const res = await fetch(DISCORD_API + '/guilds/' + g.id + '/members/' + userId + '/roles/' + roleId, {
+                method: 'PUT',
+                headers: { Authorization: 'Bot ' + DISCORD_BOT_TOKEN, 'Content-Type': 'application/json' }
+            });
+            if (res.ok) { console.log('Cargo ' + roleId + ' concedido para ' + userId + ' em ' + g.id); return { ok: true, guildId: g.id }; }
+            const status = res.status;
+            if (status !== 404) { const body = await res.text().catch(() => ''); console.error('Grant role ' + roleId + ' -> ' + status + ': ' + body.slice(0, 200)); }
+        }
+        return { ok: false, reason: 'nao-encontrado' };
+    } catch (e) { console.error('grantDiscordRole error:', e.message); return { ok: false, reason: 'erro' }; }
+}
+
 app.get('/api/purchases', adminOnly, async (req, res) => {
     res.json(await db.getPurchases());
 });
@@ -727,9 +746,9 @@ app.get('/api/user/purchases', auth, async (req, res) => {
 });
 app.post('/api/purchase', auth, async (req, res) => {
     const session = req.session;
-    const { planName, planPrice, planTier, planDuration, paymentMethod } = req.body;
+    const { planName, planPrice, planTier, planDuration, paymentMethod, planRoleId } = req.body;
     if (!planName) return res.status(400).json({ error: 'Dados incompletos' });
-    const id = await db.createPurchase({ userId: session.id, username: session.username, planName, planPrice, planTier, planDuration, paymentMethod: paymentMethod || 'manual' });
+    const id = await db.createPurchase({ userId: session.id, username: session.username, planName, planPrice, planTier, planDuration, paymentMethod: paymentMethod || 'manual', roleId: planRoleId });
     let ticket = null;
     try {
         ticket = await createDiscordTicket({ id, session, planName, planPrice, planDuration, paymentMethod });
@@ -764,11 +783,17 @@ app.post('/api/purchases/:id/approve', adminOnly, async (req, res) => {
     const id = parseInt(req.params.id);
     await db.updatePurchaseStatus(id, 'approved');
     const p = await db.getPurchase(id);
+    let grantedRole = null;
+    if (p && p.role_id && /^\d+$/.test(String(p.user_id))) {
+        grantedRole = await grantDiscordRole(p.user_id, p.role_id);
+        if (grantedRole && grantedRole.ok) logActivity('purchase_role', 'Cargo concedido na compra #' + id, getSessionSync(req));
+    }
     if (p && p.ticket_channel_id && DISCORD_BOT_TOKEN) {
         try {
+            const roleNote = grantedRole && grantedRole.ok ? '\n\nBeneficios ativados no servidor!' : '';
             await discordFetch('/channels/' + p.ticket_channel_id + '/messages', {
                 method: 'POST',
-                body: JSON.stringify({ embeds: [{ title: 'Compra #' + id + ' APROVADA', color: 0x22c55e, description: 'Pagamento confirmado! O plano **' + (p.plan_name || '') + '** ja esta ativo. Obrigado!', timestamp: new Date().toISOString() }] })
+                body: JSON.stringify({ embeds: [{ title: 'Compra #' + id + ' APROVADA', color: 0x22c55e, description: 'Pagamento confirmado! O plano **' + (p.plan_name || '') + '** ja esta ativo.' + roleNote, timestamp: new Date().toISOString() }] })
             });
         } catch(e) { console.error('Erro notificar aprovacao:', e.message); }
     }

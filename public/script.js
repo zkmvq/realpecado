@@ -3,12 +3,13 @@ let refreshInterval = null;
 let logsInterval = null;
 let staffsInterval = null;
 let activityInterval = null;
+let purchasesInterval = null;
 let currentLogsBot = null;
 let allStaffs = [];
 let announcerInterval = null;
 
-function startStaffsRefresh() { stopStaffsRefresh(); loadStaffs(); staffsInterval = setInterval(loadStaffs, 3000); activityInterval = setInterval(loadActivityLogs, 10000); }
-function stopStaffsRefresh() { if (staffsInterval) { clearInterval(staffsInterval); staffsInterval = null; } if (activityInterval) { clearInterval(activityInterval); activityInterval = null; } }
+function startStaffsRefresh() { stopStaffsRefresh(); loadStaffs(); staffsInterval = setInterval(loadStaffs, 3000); activityInterval = setInterval(loadActivityLogs, 10000); purchasesInterval = setInterval(() => { const ps = document.getElementById('purchases-section'); if (ps && ps.style.display !== 'none') loadPurchases(); }, 8000); }
+function stopStaffsRefresh() { if (staffsInterval) { clearInterval(staffsInterval); staffsInterval = null; } if (activityInterval) { clearInterval(activityInterval); activityInterval = null; } if (purchasesInterval) { clearInterval(purchasesInterval); purchasesInterval = null; } }
 
 async function apiFetch(url, options = {}) {
     const headers = { 'Content-Type': 'application/json', ...options.headers };
@@ -1028,43 +1029,102 @@ let plans = JSON.parse(localStorage.getItem('lbplans') || '[]');
 function loadPlans() { const af = document.getElementById('plans-admin-form'); if (af) af.style.display = (DiscordUser && DiscordUser.isAdmin) ? 'block' : 'none'; renderPlans(); }
 
 const PURCHASE_STATUS = { pending: 'Pendente', approved: 'Aprovado', rejected: 'Rejeitado' };
+let allPurchases = [];
+let purchasesFilter = 'all';
+
+function setPurchasesFilter(f, btn) {
+    purchasesFilter = f;
+    document.querySelectorAll('.purchase-filter-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    renderPurchasesList();
+}
+
 async function loadPurchases() {
     const data = await apiFetch('/api/purchases');
+    if (!data) return;
+    allPurchases = data;
+    renderPurchasesList();
+}
+
+function renderPurchasesList() {
     const c = document.getElementById('purchases-list');
+    const badge = document.getElementById('purchases-pending-count');
+    const pendingCount = allPurchases.filter(p => p.status === 'pending').length;
+    if (badge) {
+        badge.textContent = pendingCount + ' pendente' + (pendingCount === 1 ? '' : 's');
+        badge.style.display = pendingCount ? 'inline-flex' : 'none';
+    }
     if (!c) return;
-    if (!data || !data.length) { c.innerHTML = '<p class="empty">Nenhuma compra registrada</p>'; return; }
-    c.innerHTML = data.map(p => {
+    let list = allPurchases;
+    if (purchasesFilter === 'pending') list = allPurchases.filter(p => p.status === 'pending');
+    if (purchasesFilter === 'approved') list = allPurchases.filter(p => p.status === 'approved');
+    if (purchasesFilter === 'rejected') list = allPurchases.filter(p => p.status === 'rejected');
+    const filters = `
+<div class="purchase-filters">
+  <button class="purchase-filter-btn ${purchasesFilter === 'all' ? 'active' : ''}" onclick="setPurchasesFilter('all',this)">Todas</button>
+  <button class="purchase-filter-btn ${purchasesFilter === 'pending' ? 'active' : ''}" onclick="setPurchasesFilter('pending',this)">Pendentes${pendingCount ? ' (' + pendingCount + ')' : ''}</button>
+  <button class="purchase-filter-btn ${purchasesFilter === 'approved' ? 'active' : ''}" onclick="setPurchasesFilter('approved',this)">Aprovadas</button>
+  <button class="purchase-filter-btn ${purchasesFilter === 'rejected' ? 'active' : ''}" onclick="setPurchasesFilter('rejected',this)">Rejeitadas</button>
+</div>`;
+    if (!list.length) {
+        c.innerHTML = filters + '<p class="empty">Nenhuma compra registrada</p>';
+        return;
+    }
+    c.innerHTML = filters + list.map(p => {
         const date = new Date(p.created_at).toLocaleDateString('pt-BR') + ' ' + new Date(p.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         const isPending = p.status === 'pending';
+        const tier = p.plan_tier || 'bronze';
+        const tierColor = TIER_COLORS[tier] || '#5865f2';
+        const tierName = TIER_NAMES[tier] || tier;
+        const ticketLink = p.ticket_channel_id
+            ? `<a class="purchase-ticket-link" href="https://discord.com/channels/${p.ticket_guild_id || DISCORD_USER_GUILD}/${p.ticket_channel_id}" target="_blank"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 4.97-4.03 9-9 9-1.21 0-2.36-.24-3.4-.68L3 20l1.83-4.1A8.94 8.94 0 0 1 3 10c0-4.97 4.03-9 9-9s9 4.03 9 9z"/></svg> Ticket</a>`
+            : '';
         return `
-<div class="purchase-item">
-  <div class="purchase-dot ${p.status}"></div>
+<div class="purchase-item ${isPending ? 'pending' : ''}">
+  <div class="purchase-tier-stripe" style="background:${tierColor}"></div>
   <div class="purchase-info">
-    <div class="purchase-plan">#${p.id} - ${esc(p.plan_name)}</div>
+    <div class="purchase-top">
+      <span class="purchase-plan"><span class="purchase-id">#${p.id}</span> ${esc(p.plan_name)}</span>
+      <span class="purchase-tier-badge" style="color:${tierColor};border-color:${tierColor}55;background:${tierColor}14">${esc(tierName)}</span>
+    </div>
+    <div class="purchase-buyer" onclick="openStaffProfile('${escJS(String(p.user_id))}')" title="Ver perfil da pessoa">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      ${esc(p.username)}
+    </div>
     <div class="purchase-meta">
-      <span class="purchase-user">${esc(p.username)}</span>
-      <span>${esc(p.plan_price || '?')}</span>
+      <span class="purchase-price">${esc(p.plan_price || '?')}</span>
       <span>${esc(p.plan_duration || '?')}</span>
       <span>${date}</span>
+      ${ticketLink}
     </div>
   </div>
-  <span class="purchase-status-badge ${escAttr(p.status)}">${esc(PURCHASE_STATUS[p.status] || p.status)}</span>
-  ${isPending ? `<div class="purchase-actions">
-    <button class="purchase-btn purchase-approve" onclick="approvePurchase(${p.id})">Aprovar</button>
-    <button class="purchase-btn purchase-reject" onclick="rejectPurchase(${p.id})">Rejeitar</button>
-  </div>` : ''}
+  <div class="purchase-side">
+    <span class="purchase-status-badge ${escAttr(p.status)}">${esc(PURCHASE_STATUS[p.status] || p.status)}</span>
+    ${isPending ? `<div class="purchase-actions">
+      <button class="purchase-btn purchase-approve" onclick="approvePurchase(${p.id})"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Aprovar e Ativar</button>
+      <button class="purchase-btn purchase-reject" onclick="rejectPurchase(${p.id})"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Rejeitar</button>
+    </div>` : ''}
+  </div>
 </div>`;
     }).join('');
 }
+
 async function approvePurchase(id) {
-    if (!confirm('Aprovar esta compra?')) return;
-    await apiFetch('/api/purchases/' + id + '/approve', { method: 'POST' });
-    loadPurchases();
+    if (!confirm('Aprovar esta compra e ativar o plano na pessoa?')) return;
+    const res = await apiFetch('/api/purchases/' + id + '/approve', { method: 'POST' });
+    if (res && res.success) {
+        cachedAllPurchases = null;
+        loadPurchases();
+        alert('Compra aprovada! Plano ativo na pessoa e beneficios concedidos no Discord (se configurado).');
+    }
 }
 async function rejectPurchase(id) {
     if (!confirm('Rejeitar esta compra?')) return;
-    await apiFetch('/api/purchases/' + id + '/reject', { method: 'POST' });
-    loadPurchases();
+    const res = await apiFetch('/api/purchases/' + id + '/reject', { method: 'POST' });
+    if (res && res.success) {
+        cachedAllPurchases = null;
+        loadPurchases();
+    }
 }
 
 let usersRefreshInterval = null;
@@ -1131,40 +1191,35 @@ function renderPlans() {
         const botsMax = p.botsMax || '∞';
         const isFeat = i === featuredIdx;
         return `
-<div class="plan-card tier-${tier} ${isFeat ? 'featured' : ''}">
-  <div class="plan-head">
-    <div class="plan-name-wrap">
-      <div class="plan-name tier-${tier}">${esc(p.name)}</div>
-    </div>
-    <div class="plan-ram">
-      <div class="plan-ram-value">${esc(String(botsMax))}</div>
-      <div class="plan-ram-label">Bot${botsMax == 1 ? '' : 's'}</div>
-    </div>
+<div class="plan-card tier-${tier} ${isFeat ? 'featured' : ''}" style="--tier:${color}">
+  ${isFeat ? '<div class="plan-featured-badge">Mais Popular</div>' : ''}
+  <div class="plan-top">
+    <div class="plan-tier-icon" style="color:${color};border-color:${color}40;background:${color}12">${TIER_ICONS[tier]}</div>
+    <span class="plan-tier-name" style="color:${color}">${TIER_NAMES[tier] || tier}</span>
   </div>
+  <div class="plan-name tier-${tier}">${esc(p.name)}</div>
+  <div class="plan-sub">Hospedagem para <strong>${esc(String(botsMax))}</strong> bot${botsMax == 1 ? '' : 's'}</div>
   <ul class="plan-features">
     ${features.map(f => `<li>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#57f287" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
       ${esc(f)}
     </li>`).join('')}
     <li>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#57f287" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-      <strong>${esc(String(botsMax))}</strong> <small>bot${botsMax == 1 ? '' : 's'}</small> maximo
-    </li>
-    <li>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#57f287" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
       Suporte 24/7
     </li>
   </ul>
   <div class="plan-bottom">
     <div class="plan-price-wrap">
-      <div class="plan-price">${esc(p.price)}</div>
-      <div class="plan-duration">/ ${esc(p.duration)}</div>
+      <span class="plan-price">${esc(p.price)}</span>
+      <span class="plan-duration">/ ${esc(p.duration)}</span>
     </div>
     <button class="plan-buy-btn tier-${tier}" onclick="openCheckoutByIndex(${i})">
-      Agora
+      Escolher
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
     </button>
   </div>
-  ${isAdmin ? `<div class="plan-admin-bar"><button class="plan-delete-btn" onclick="deletePlan(${i})">Remover</button></div>` : ''}
+  ${isAdmin ? `<div class="plan-admin-bar"><button class="plan-delete-btn" onclick="deletePlan(${i})">Remover plano</button></div>` : ''}
 </div>`;
     }).join('');
 }
@@ -1180,7 +1235,8 @@ function openCheckout(plan) {
     if (!DiscordUser) { alert('Faça login com Discord primeiro'); return; }
     _checkoutPlan = plan;
     const color = TIER_COLORS[plan.tier] || '#5865f2';
-    document.getElementById('checkout-tier-badge').textContent = TIER_NAMES[plan.tier] || plan.tier;
+    const tierIcon = TIER_ICONS[plan.tier] || '';
+    document.getElementById('checkout-tier-badge').innerHTML = tierIcon + ' ' + (TIER_NAMES[plan.tier] || plan.tier);
     document.getElementById('checkout-tier-badge').style.background = color;
     document.getElementById('checkout-plan-name').textContent = plan.name;
     document.getElementById('checkout-plan-price').textContent = plan.price;
@@ -1207,7 +1263,7 @@ async function confirmPurchase() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ planName: _checkoutPlan.name, planPrice: _checkoutPlan.price, planTier: _checkoutPlan.tier, planDuration: _checkoutPlan.duration })
+            body: JSON.stringify({ planName: _checkoutPlan.name, planPrice: _checkoutPlan.price, planTier: _checkoutPlan.tier, planDuration: _checkoutPlan.duration, planRoleId: _checkoutPlan.roleId || null })
         });
         const data = await res.json();
         if (data.success) {
@@ -1242,15 +1298,17 @@ function addPlan() {
     const tier = document.getElementById('plan-tier').value;
     const features = document.getElementById('plan-features').value.trim();
     const botsMax = document.getElementById('plan-bots').value || '∞';
+    const roleId = document.getElementById('plan-role-id').value.trim() || null;
     const s = document.getElementById('plan-status');
     if (!name || !price || !duration) { s.textContent = 'Preencha nome, preco e duracao'; s.style.color = '#ef4444'; return; }
-    plans.push({ name, price, duration, tier, features, botsMax, createdAt: new Date().toISOString() });
+    plans.push({ name, price, duration, tier, features, botsMax, roleId, createdAt: new Date().toISOString() });
     localStorage.setItem('lbplans', JSON.stringify(plans));
     document.getElementById('plan-name').value = '';
     document.getElementById('plan-price').value = '';
     document.getElementById('plan-duration').value = '';
     document.getElementById('plan-features').value = '';
     document.getElementById('plan-bots').value = '';
+    document.getElementById('plan-role-id').value = '';
     document.getElementById('plan-tier').value = 'bronze';
     s.textContent = 'Plano criado!'; s.style.color = '#22c55e';
     setTimeout(() => { s.textContent = ''; }, 2000);
