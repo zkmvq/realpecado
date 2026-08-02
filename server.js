@@ -481,6 +481,18 @@ function dirSizeBytes(dir) {
     return total;
 }
 
+function findNodeModulesDirs(dir) {
+    const out = [];
+    try {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const p = path.join(dir, entry.name);
+            if (entry.name === 'node_modules' && entry.isDirectory()) out.push(p);
+            else if (entry.isDirectory() && entry.name !== '.git') out.push(...findNodeModulesDirs(p));
+        }
+    } catch(e) {}
+    return out;
+}
+
 app.get('/api/admin/disk', auth, async (req, res) => {
     const s = req.session;
     if (!(await isAdmin(s))) return res.status(403).json({ error: 'Sem permissao' });
@@ -547,8 +559,9 @@ app.post('/api/admin/cleanup', auth, async (req, res) => {
     let prunedMB = 0;
     if (fs.existsSync(BOTS_DIR)) {
         for (const name of fs.readdirSync(BOTS_DIR)) {
-            const nmDir = path.join(BOTS_DIR, name, 'node_modules');
-            if (fs.existsSync(nmDir) && !bots[name] && !installingBots.has(name)) {
+            if (bots[name] || installingBots.has(name)) continue;
+            const botDir = path.join(BOTS_DIR, name);
+            for (const nmDir of findNodeModulesDirs(botDir)) {
                 try {
                     prunedMB += dirSizeBytes(nmDir) / 1048576;
                     fs.rmSync(nmDir, { recursive: true, force: true });
