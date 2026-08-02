@@ -310,13 +310,23 @@ async function startBotProcess(name) {
     const mainFile = found.file;
     const runtime = found.runtime;
     const runDir = path.dirname(mainFile);
+    let nodeRoot = runDir;
+    if (runtime === 'node') {
+        if (!fs.existsSync(path.join(runDir, 'package.json'))) {
+            let d = runDir;
+            while (d.startsWith(botPath) && d !== path.dirname(d)) {
+                if (fs.existsSync(path.join(d, 'package.json'))) { nodeRoot = d; break; }
+                d = path.dirname(d);
+            }
+        }
+    }
     try {
         if (installingBots.has(name)) return { error: 'Bot ja esta instalando dependencias, aguarde' };
         if (runtime === 'node') {
-            if (fs.existsSync(path.join(runDir, 'package.json')) && !fs.existsSync(path.join(runDir, 'node_modules'))) {
+            if (fs.existsSync(path.join(nodeRoot, 'package.json')) && !fs.existsSync(path.join(nodeRoot, 'node_modules'))) {
                 installingBots.add(name);
                 db.saveBot(name, { status: 'installing', startedAt: new Date().toISOString() });
-                const ok = await runCmdAsync('npm', ['install', '--prefer-offline'], { cwd: runDir });
+                const ok = await runCmdAsync('npm', ['install', '--prefer-offline'], { cwd: nodeRoot });
                 installingBots.delete(name);
                 if (!ok) { db.saveBot(name, { status: 'stopped', stoppedAt: new Date().toISOString(), exitCode: 1 }); return { error: 'Erro ao instalar dependencias npm' }; }
             }
@@ -338,9 +348,9 @@ async function startBotProcess(name) {
         const runner = runtime === 'node' ? 'node' : getPythonBin();
         if (!runner) return { error: 'Python nao encontrado no servidor' };
         const proc = spawn(runner, [mainFile], {
-            cwd: runDir,
+            cwd: runtime === 'node' ? nodeRoot : runDir,
             stdio: ['pipe', 'pipe', 'pipe'],
-            env: runtime === 'node' ? { ...process.env, NODE_PATH: path.join(runDir, 'node_modules') } : process.env
+            env: runtime === 'node' ? { ...process.env, NODE_PATH: path.join(nodeRoot, 'node_modules') } : process.env
         });
         proc._startedAt = Date.now();
         proc._name = name;
