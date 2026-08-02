@@ -1442,48 +1442,63 @@ async function deletePlan(i) {
 }
 
 // === DATABASES ===
-const DB_ICONS = { postgres: 'PG', mongodb: 'MG', mysql: 'MY', redis: 'RD', mariadb: 'MA', sqlite: 'SQ' };
-const DB_COLORS = { postgres: '#336791', mongodb: '#4DB33D', mysql: '#4479A1', redis: '#DC382D', mariadb: '#A6633C', sqlite: '#8899AA' };
+const DB_ICONS = { postgres: 'Pg', mongodb: 'Mo', mysql: 'MY', redis: 'R', mariadb: 'MA', sqlite: 'SQL' };
+const DB_GRADIENTS = { postgres: 'linear-gradient(135deg,#1e3f5f,#336791)', mongodb: 'linear-gradient(135deg,#147a45,#3fb95f)', mysql: 'linear-gradient(135deg,#0f7a3a,#2eb45f)', redis: 'linear-gradient(135deg,#a62720,#e03a30)', mariadb: 'linear-gradient(135deg,#0a5b66,#12a3b3)', sqlite: 'linear-gradient(135deg,#5a6f86,#8aa2bb)' };
 const DB_PORTS = { postgres: 5432, mongodb: 27017, mysql: 3306, redis: 6379, mariadb: 3306, sqlite: 0 };
 const DB_TYPES = [
-    { id: 'postgres', name: 'PostgreSQL', desc: 'Relacional com transacoes ACID e JSONB', available: true },
-    { id: 'mongodb', name: 'MongoDB', desc: 'NoSQL orientado a documentos', available: false },
-    { id: 'mysql', name: 'MySQL', desc: 'Relacional classico da web', available: false },
-    { id: 'redis', name: 'Redis', desc: 'Chave-valor em memoria para cache e filas', available: false },
-    { id: 'mariadb', name: 'MariaDB', desc: 'Relacional, fork do MySQL', available: false },
-    { id: 'sqlite', name: 'SQLite', desc: 'Banco local em arquivo', available: false }
+    { id: 'postgres', name: 'PostgreSQL', desc: 'Relacional com transacoes ACID e JSONB' },
+    { id: 'mysql', name: 'MySQL', desc: 'Relacional classico da web' },
+    { id: 'mariadb', name: 'MariaDB', desc: 'Relacional, fork do MySQL' },
+    { id: 'mongodb', name: 'MongoDB', desc: 'NoSQL orientado a documentos' },
+    { id: 'redis', name: 'Redis', desc: 'Chave-valor em memoria para cache e filas' },
+    { id: 'sqlite', name: 'SQLite', desc: 'Banco local em arquivo' }
 ];
 
 function renderDbTypes() {
     const grid = document.getElementById('db-types-grid');
     if (!grid) return;
     grid.innerHTML = DB_TYPES.map(t => {
-        const color = DB_COLORS[t.id];
+        const grad = DB_GRADIENTS[t.id];
         return `
-<div class="db-type-card${t.available ? '' : ' soon'}">
+<div class="db-type-card">
   <div class="db-type-head">
-    <div class="db-type-icon" style="background:${color}20;color:${color};border:1px solid ${color}30">${DB_ICONS[t.id]}</div>
+    <div class="db-type-icon" style="background:${grad};color:#fff">${DB_ICONS[t.id]}</div>
     <div class="db-type-name">${t.name}</div>
   </div>
   <div class="db-type-desc">${t.desc}</div>
   <div class="db-type-actions">
-    <span class="db-type-status ${t.available ? 'ok' : 'soon'}">${t.available ? 'Disponivel' : 'Em breve'}</span>
-    ${t.available
-        ? `<button class="db-type-create" style="background:${color}" onclick="openDbModal()">Criar</button>`
-        : `<button class="db-type-create" style="background:${color}" disabled>Em breve</button>`}
+    <span class="db-type-status ok">Disponivel</span>
+    <button class="db-type-create" style="background:${grad}" onclick="openDbModal('${t.id}')">Criar</button>
   </div>
 </div>`;
     }).join('');
 }
 
-function openDbModal() {
-    const m = document.getElementById('db-modal');
-    const inp = document.getElementById('db-modal-name');
+let currentDbType = 'postgres';
+function renderDbTypeChips() {
+    const c = document.getElementById('db-modal-types');
+    if (!c) return;
+    c.innerHTML = DB_TYPES.map(t => {
+        const active = t.id === currentDbType;
+        return `<button class="db-type-chip${active ? ' active' : ''}" style="${active ? 'background:' + DB_GRADIENTS[t.id] + ';border-color:transparent;color:#fff' : ''}" onclick="openDbModal('${t.id}')">${t.name}</button>`;
+    }).join('');
+}
+
+function openDbModal(type) {
+    if (type) currentDbType = type;
+    renderDbTypeChips();
+    const t = DB_TYPES.find(x => x.id === currentDbType) || DB_TYPES[0];
+    const title = document.getElementById('db-modal-title');
+    const sub = document.getElementById('db-modal-sub');
+    const nameInp = document.getElementById('db-modal-name');
     const s = document.getElementById('db-modal-status');
-    if (inp) inp.value = '';
+    if (title) title.textContent = 'Criar Banco ' + t.name;
+    if (sub) sub.textContent = currentDbType === 'sqlite' ? 'Cria um arquivo .db no servidor (sem usuario/senha).' : 'Cria database e usuario reais. Conexao: localhost:' + DB_PORTS[currentDbType];
+    if (nameInp) nameInp.value = '';
     if (s) s.textContent = '';
+    const m = document.getElementById('db-modal');
     if (m) m.classList.add('show');
-    if (inp) setTimeout(() => inp.focus(), 50);
+    if (nameInp) setTimeout(() => nameInp.focus(), 50);
 }
 
 function closeDbModal() {
@@ -1503,12 +1518,12 @@ async function loadDatabases() {
     if (!c) return;
     if (!data || !data.length) { c.innerHTML = '<p class="empty">Nenhum banco criado</p>'; return; }
     c.innerHTML = data.map(d => {
-        const color = DB_COLORS[d.db_type] || '#555';
+        const grad = DB_GRADIENTS[d.db_type] || 'linear-gradient(135deg,#555,#333)';
         const storedPwd = _dbPasswords[d.id];
         return `
 <div class="db-card">
   <div class="db-card-header">
-    <div class="db-icon" style="background:${color}20;color:${color};border:1px solid ${color}30">
+    <div class="db-icon" style="background:${grad};color:#fff">
       ${DB_ICONS[d.db_type] || 'DB'}
     </div>
     <div class="db-card-info">
@@ -1545,15 +1560,17 @@ async function loadDatabases() {
 }
 
 async function createDatabase() {
-    const dbType = 'postgres';
-    const dbName = document.getElementById('db-modal-name').value.trim();
+    const dbType = currentDbType;
+    const dbName = document.getElementById('db-modal-name').value.trim().toLowerCase();
     const s = document.getElementById('db-modal-status');
     if (!dbName) { s.textContent = 'Digite o nome do banco'; s.style.color = '#ef4444'; return; }
-    s.textContent = 'Criando banco real no PostgreSQL...'; s.style.color = '#f59e0b';
+    if (!/^[a-z][a-z0-9_]{2,29}$/.test(dbName)) { s.textContent = 'Nome invalido (min 3 caracteres, minusculas, sem espacos)'; s.style.color = '#ef4444'; return; }
+    s.textContent = 'Criando banco real no servidor...'; s.style.color = '#f59e0b';
     const data = await apiFetch('/api/databases', { method: 'POST', body: JSON.stringify({ dbType, dbName }) });
     if (data && data.success) {
         _dbPasswords[data.db.id] = data.db.db_password;
-        s.innerHTML = `Banco "<strong>${esc(data.db.db_name)}</strong>" criado!<br><span style="font-size:11px;color:#a1a1aa">Usuario: ${esc(data.db.db_user)} | Host: ${esc(data.db.db_host)}:${data.db.db_port}</span><br><span style="font-size:11px;color:#f59e0b">Senha: ${esc(data.db.db_password)} (copie agora!)</span>`;
+        const conn = connString(data.db.db_type, data.db.db_name, data.db.db_host, data.db.db_port, data.db.db_user, data.db.db_password);
+        s.innerHTML = `Banco "<strong>${esc(data.db.db_name)}</strong>" criado!<br><span style="font-size:11px;color:#a1a1aa">Usuario: ${esc(data.db.db_user)} | Host: ${esc(data.db.db_host)}:${data.db.db_port}</span><br><span style="font-size:11px;color:#f59e0b">Senha: ${esc(data.db.db_password)} (copie agora!)</span><br><span style="font-size:11px;color:#6ee7b7;word-break:break-all">${esc(conn)}</span>`;
         s.style.color = '#22c55e';
         document.getElementById('db-modal-name').value = '';
         loadDatabases();
@@ -1578,9 +1595,17 @@ async function resetDbPassword(id, name) {
     }
 }
 
+function connString(type, name, host, port, user, pwd) {
+    if (type === 'postgres') return `postgresql://${user}:${pwd}@${host}:${port}/${name}`;
+    if (type === 'mysql' || type === 'mariadb') return `mysql://${user}:${pwd}@${host}:${port}/${name}`;
+    if (type === 'redis') return `redis://:${pwd}@${host}:${port}`;
+    if (type === 'mongodb') return `mongodb://${user}:${pwd}@${host}:${port}/${name}`;
+    if (type === 'sqlite') return `sqlite:///app/persist/sqlite/${name}.db`;
+    return `${user}:${pwd}@${host}:${port}/${name}`;
+}
+
 function copyDbConn(id, name, type, host, port, user) {
     const pwd = _dbPasswords[id] || 'SENHA';
-    const connStr = { postgres: `postgresql://${user}:${pwd}@${host}:${port}/${name}` };
-    const text = connStr[type] || `${user}:${pwd}@${host}:${port}/${name}`;
-    navigator.clipboard.writeText(text).then(() => alert('String de conexao copiada!'));
+    const text = connString(type, name, host, port, user, pwd);
+    navigator.clipboard.writeText(text).then(() => alert('String de conexao copiada!\n' + text));
 }

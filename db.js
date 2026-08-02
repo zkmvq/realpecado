@@ -241,21 +241,28 @@ async function saveTicketInfo(id, info) {
 }
 
 async function createDatabase(data) {
-    try { if (dbType === 'pg') { const r = await pgPool.query('INSERT INTO databases (user_id, db_type, db_name, db_user, db_password, db_host, db_port) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *', [data.userId, data.dbType, data.dbName, data.dbUser, data.dbPassword, data.dbHost || 'localhost', data.dbPort || 5432]); return r.rows[0]; } } catch (e) { console.error('createDatabase error:', e.message); }
+    try {
+        if (dbType === 'pg') { const r = await pgPool.query('INSERT INTO databases (user_id, db_type, db_name, db_user, db_password, db_host, db_port) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *', [data.userId, data.dbType, data.dbName, data.dbUser, data.dbPassword, data.dbHost || 'localhost', data.dbPort || 5432]); return r.rows[0]; }
+        if (dbType === 'json') { const s = jsonStore('databases'); const id = (s.data._nextId || 0) + 1; s.data._nextId = id; const rec = { id, user_id: data.userId, db_type: data.dbType, db_name: data.dbName, db_user: data.dbUser, db_password: data.dbPassword, db_host: data.dbHost || 'localhost', db_port: data.dbPort || 5432, status: 'active', created_at: new Date().toISOString() }; s.data[id] = rec; jsonSave('databases'); return rec; }
+    } catch (e) { console.error('createDatabase error:', e.message); }
     return null;
 }
 async function getDatabases(userId) {
-    try { if (dbType === 'pg') { if (userId) return (await pgPool.query('SELECT * FROM databases WHERE user_id=$1 ORDER BY created_at DESC', [userId])).rows; return (await pgPool.query('SELECT * FROM databases ORDER BY created_at DESC')).rows; } } catch (e) { console.error('getDatabases error:', e.message); }
+    try {
+        if (dbType === 'pg') { if (userId) return (await pgPool.query('SELECT * FROM databases WHERE user_id=$1 ORDER BY created_at DESC', [userId])).rows; return (await pgPool.query('SELECT * FROM databases ORDER BY created_at DESC')).rows; }
+        if (dbType === 'json') { const all = Object.values(jsonStore('databases').data).filter(v => typeof v === 'object' && v.id); const list = userId ? all.filter(d => d.user_id === userId) : all; return list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); }
+    } catch (e) { console.error('getDatabases error:', e.message); }
     return [];
 }
 async function deleteDatabase(id, userId) {
-    try { if (dbType === 'pg') { if (userId) await pgPool.query('DELETE FROM databases WHERE id=$1 AND user_id=$2', [id, userId]); else await pgPool.query('DELETE FROM databases WHERE id=$1', [id]); } } catch (e) { console.error('deleteDatabase error:', e.message); }
+    try { if (dbType === 'pg') { if (userId) await pgPool.query('DELETE FROM databases WHERE id=$1 AND user_id=$2', [id, userId]); else await pgPool.query('DELETE FROM databases WHERE id=$1', [id]); } if (dbType === 'json') { const s = jsonStore('databases'); const rec = s.data[id]; if (rec && (!userId || rec.user_id === userId)) { delete s.data[id]; jsonSave('databases'); } } } catch (e) { console.error('deleteDatabase error:', e.message); }
 }
 async function resetDbPassword(id, newPassword) {
-    try { if (dbType === 'pg') await pgPool.query('UPDATE databases SET db_password=$2 WHERE id=$1', [id, newPassword]); } catch (e) { console.error('resetDbPassword error:', e.message); }
+    try { if (dbType === 'pg') await pgPool.query('UPDATE databases SET db_password=$2 WHERE id=$1', [id, newPassword]); if (dbType === 'json') { const s = jsonStore('databases'); if (s.data[id]) { s.data[id].db_password = newPassword; jsonSave('databases'); } } } catch (e) { console.error('resetDbPassword error:', e.message); }
 }
 async function getDatabaseById(id) {
-    try { if (dbType === 'pg') { const r = await pgPool.query('SELECT * FROM databases WHERE id=$1', [id]); return r.rows[0] || null; } } catch (e) { console.error('getDatabaseById error:', e.message); }
+    id = parseInt(id);
+    try { if (dbType === 'pg') { const r = await pgPool.query('SELECT * FROM databases WHERE id=$1', [id]); return r.rows[0] || null; } if (dbType === 'json') { const rec = jsonStore('databases').data[id]; return rec && typeof rec === 'object' ? rec : null; } } catch (e) { console.error('getDatabaseById error:', e.message); }
     return null;
 }
 

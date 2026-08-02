@@ -44,6 +44,7 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 
 const BOTS_DIR = process.env.BOTS_DIR || path.join(__dirname, 'bots');
 if (!fs.existsSync(BOTS_DIR)) fs.mkdirSync(BOTS_DIR, { recursive: true });
+const PERSIST_ROOT = process.env.PERSIST_DIR || path.dirname(BOTS_DIR);
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -1040,40 +1041,273 @@ app.post('/api/purchases/:id/reject', adminOnly, async (req, res) => {
     res.json({ success: true });
 });
 
-// === DATABASES ===
+// === DATABASES (in-container engines) ===
+const DB_ENGINE = { postgres: false, mysql: false, redis: false, mongodb: false };
+const DB_ALLOWED = ['postgres', 'mongodb', 'mysql', 'redis', 'mariadb', 'sqlite'];
+const DB_ENGINE_PORTS = { postgres: 5432, mysql: 3306, mariadb: 3306, redis: 6379, mongodb: 27017 };
+let redisNextPort = 6380;
+
+function pgBinDir() {
+    try {
+        const base = '/usr/lib/postgresql';
+        if (!fs.existsSync(base)) return null;
+        const dirs = fs.readdirSync(base);
+        if (!dirs.length) return null;
+        return path.join(base, dirs.sort().pop());
+    } catch (e) { return null; }
+}
+
+async function waitForPort(port, attempts, checkFn) {
+    for (let i = 0; i < attempts; i++) {
+        try { if (await checkFn(port)) return true; } catch (e) {}
+        await new Promise(r => setTimeout(r, 1000));
+    }
+    return false;
+}
+
+async function ensurePostgres() {
+    const pgBin = pgBinDir();
+    if (!pgBin) return false;
+    const data = path.join(PERSIST_ROOT, 'pgdata');
+    try {
+        if (!fs.existsSync(path.join(data, 'PG_VERSION'))) {
+            fs.mkdirSync(data, { recursive: true });
+            await runCmdAsync('chown', ['-R', 'postgres:postgres', data]);
+            const init = await runCmdAsync('su', ['postgres', '-c', pgBin + '/initdb -D ' + data + ' -A trust -U postgres --no-locale --encoding=UTF8']);
+            if (!init) return false;
+        }
+        if (!DB_ENGINE.postgres) {
+            const started = await runCmdAsync('su', ['postgres', '-c', pgBin + '/pg_ctl -D ' + data + ' -l ' + data + '/server.log -o "-p 5432 -c listen_addresses=127.0.0.1" -w start']);
+            if (!started) {
+                const check = await waitForPort(5432, 10, async () => {
+                    const c = new (require('pg').Client)({ host: '127.0.0.1', port: 5432, user: 'postgres', database: 'postgres' });
+                    await c.connect(); await c.end(); return true;
+                });
+                if (!check) return false;
+            }
+        }
+        DB_ENGINE.postgres = true;
+        return true;
+    } catch (e) { console.error('ensurePostgres error:', e.message); return false; }
+}
+
+async function ensureMysql() {
+    const data = path.join(PERSIST_ROOT, 'mysqldata');
+    try {
+        if (!fs.existsSync(path.join(data, 'mysql'))) {
+            fs.mkdirSync(data, { recursive: true });
+            await runCmdAsync('chown', ['-R', 'mysql:mysql', data]);
+            const inst = await runCmdAsync('mariadb-install-db', ['--user=mysql', '--datadir=' + data, '--auth-root-authentication-method=normal']);
+            if (!inst) return false;
+        }
+        if (!DB_ENGINE.mysql) {
+            const started = await runCmdAsync('mariadbd', ['--user=mysql', '--datadir=' + data, '--port=3306', '--bind-address=127.0.0.1', '--socket=' + data + '/mysqld.sock', '--pid-file=' + data + '/mysqld.pid', '--daemonize', '--log-error=' + data + '/mysqld.log', '--innodb-buffer-pool-size=64M']);
+            if (!started) {
+                const check = await waitForPort(3306, 10, async () => {
+                    const m = require('mysql2/promise');
+                    const conn = await m.createConnection({ host: '127.0.0.1', port: 3306, user: 'root' });
+                    await conn.query('SELECT 1'); await conn.end(); return true;
+                });
+                if (!check) return false;
+            }
+        }
+        DB_ENGINE.mysql = true;
+        return true;
+    } catch (e) { console.error('ensureMysql error:', e.message); return false; }
+}
+
+async function ensureRedis() {
+    const data = path.join(PERSIST_ROOT, 'redisdata');
+    try {
+        fs.mkdirSync(data, { recursive: true });
+        await runCmdAsync('chown', ['-R', 'redis:redis', data]);
+        if (!DB_ENGINE.redis) {
+            await runCmdAsync('su', ['redis', '-s', '/bin/sh', '-c', 'redis-server --port 6379 --bind 127.0.0.1 --dir ' + data + ' --dbfilename dump.rdb --appendonly yes --daemonize yes --logfile ' + data + '/redis.log']);
+            const check = await waitForPort(6379, 10, async () => {
+                const out = require('child_process').execFileSync('redis-cli', ['-p', '6379', 'ping'], { stdio: 'pipe', timeout: 3000 });
+                return String(out).includes('PONG');
+            });
+            if (!check) return false;
+        }
+        DB_ENGINE.redis = true;
+        return true;
+    } catch (e) { console.error('ensureRedis error:', e.message); return false; }
+}
+
+async function ensureMongo() {
+    const data = path.join(PERSIST_ROOT, 'mongodata');
+    try {
+        if (!fs.existsSync('/usr/local/bin/mongod')) return false;
+        fs.mkdirSync(data, { recursive: true });
+        if (!DB_ENGINE.mongodb) {
+            await runCmdAsync('mongod', ['--dbpath', data, '--bind_ip', '127.0.0.1', '--port', '27017', '--fork', '--logpath', path.join(data, 'mongod.log'), '--wiredTigerCacheSizeGB', '0.25']);
+            const check = await waitForPort(27017, 12, async () => {
+                const { MongoClient } = require('mongodb');
+                const mc = new MongoClient('mongodb://127.0.0.1:27017', { serverSelectionTimeoutMS: 1500 });
+                await mc.connect(); await mc.db('admin').command({ ping: 1 }); await mc.close(); return true;
+            });
+            if (!check) return false;
+        }
+        DB_ENGINE.mongodb = true;
+        return true;
+    } catch (e) { console.error('ensureMongo error:', e.message); return false; }
+}
+
+function ensureDbEngines() {
+    ensurePostgres().then(ok => console.log('Engine PostgreSQL:', ok ? 'up' : 'indisponivel'));
+    ensureMysql().then(ok => console.log('Engine MariaDB/MySQL:', ok ? 'up' : 'indisponivel'));
+    ensureRedis().then(ok => console.log('Engine Redis:', ok ? 'up' : 'indisponivel'));
+    ensureMongo().then(ok => console.log('Engine MongoDB:', ok ? 'up' : 'indisponivel'));
+}
+
+async function provisionDb(dbType, dbName, user, password) {
+    if (dbType === 'postgres') {
+        const c = new (require('pg').Client)({ host: '127.0.0.1', port: 5432, user: 'postgres', database: 'postgres' });
+        await c.connect();
+        await c.query('CREATE DATABASE "' + dbName + '"');
+        await c.query("CREATE USER \"" + user + "\" WITH PASSWORD '" + password + "'");
+        await c.query('GRANT ALL PRIVILEGES ON DATABASE "' + dbName + '" TO "' + user + '"');
+        await c.query('ALTER DATABASE "' + dbName + '" OWNER TO "' + user + '"');
+        await c.end();
+        return { host: 'localhost', port: 5432, user };
+    }
+    if (dbType === 'mysql' || dbType === 'mariadb') {
+        const m = require('mysql2/promise');
+        const conn = await m.createConnection({ host: '127.0.0.1', port: 3306, user: 'root' });
+        await conn.query('CREATE DATABASE `' + dbName + '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+        await conn.query("CREATE USER '" + user + "'@'%' IDENTIFIED BY '" + password + "'");
+        await conn.query("GRANT ALL PRIVILEGES ON `" + dbName + "`.* TO '" + user + "'@'%'");
+        await conn.query('FLUSH PRIVILEGES');
+        await conn.end();
+        return { host: 'localhost', port: 3306, user };
+    }
+    if (dbType === 'redis') {
+        const port = redisNextPort++;
+        const dir = path.join(PERSIST_ROOT, 'redisdb', dbName);
+        fs.mkdirSync(dir, { recursive: true });
+        await runCmdAsync('chown', ['-R', 'redis:redis', path.join(PERSIST_ROOT, 'redisdb')]);
+        const ok = await runCmdAsync('su', ['redis', '-s', '/bin/sh', '-c', 'redis-server --port ' + port + ' --bind 127.0.0.1 --requirepass ' + password + ' --dir ' + dir + ' --appendonly yes --daemonize yes --logfile ' + dir + '/redis.log']);
+        if (!ok) throw new Error('Falha ao iniciar Redis na porta ' + port);
+        return { host: 'localhost', port, user: 'default' };
+    }
+    if (dbType === 'mongodb') {
+        const { MongoClient } = require('mongodb');
+        const mc = new MongoClient('mongodb://127.0.0.1:27017', { serverSelectionTimeoutMS: 4000 });
+        await mc.connect();
+        const dbh = mc.db(dbName);
+        await dbh.createUser({ user, pwd: password, roles: [{ role: 'readWrite', db: dbName }] });
+        try { await dbh.command({ create: '_init', capped: true, size: 1024 }); } catch (e) {}
+        await mc.close();
+        return { host: 'localhost', port: 27017, user };
+    }
+    if (dbType === 'sqlite') {
+        const dir = path.join(PERSIST_ROOT, 'sqlite');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, dbName + '.db'), '');
+        return { host: 'localhost', port: 0, user: '-' };
+    }
+    throw new Error('Tipo de banco desconhecido');
+}
+
+async function dropProvisioned(dbRec) {
+    const { db_type, db_name, db_user, db_port, db_password } = dbRec;
+    if (db_type === 'postgres') {
+        const c = new (require('pg').Client)({ host: '127.0.0.1', port: 5432, user: 'postgres', database: 'postgres' });
+        await c.connect();
+        await c.query('DROP DATABASE IF EXISTS "' + db_name + '" WITH (FORCE)');
+        await c.query('DROP USER IF EXISTS "' + db_user + '"');
+        await c.end();
+    } else if (db_type === 'mysql' || db_type === 'mariadb') {
+        const m = require('mysql2/promise');
+        const conn = await m.createConnection({ host: '127.0.0.1', port: 3306, user: 'root' });
+        await conn.query('DROP DATABASE IF EXISTS `' + db_name + '`');
+        await conn.query("DROP USER IF EXISTS '" + db_user + "'@'%'");
+        await conn.query('FLUSH PRIVILEGES');
+        await conn.end();
+    } else if (db_type === 'redis') {
+        await runCmdAsync('redis-cli', ['-p', String(db_port), '-a', db_password, 'shutdown', 'nosave']);
+        try { fs.rmSync(path.join(PERSIST_ROOT, 'redisdb', db_name), { recursive: true, force: true }); } catch (e) {}
+    } else if (db_type === 'mongodb') {
+        const { MongoClient } = require('mongodb');
+        const mc = new MongoClient('mongodb://127.0.0.1:27017', { serverSelectionTimeoutMS: 4000 });
+        await mc.connect();
+        try { await mc.db(db_name).dropUser(db_user); } catch (e) {}
+        try { await mc.db(db_name).dropDatabase(); } catch (e) {}
+        await mc.close();
+    } else if (db_type === 'sqlite') {
+        try { fs.rmSync(path.join(PERSIST_ROOT, 'sqlite', db_name + '.db'), { force: true }); } catch (e) {}
+    }
+}
+
+async function resetProvisionedPassword(dbRec, newPassword) {
+    const { db_type, db_name, db_user, db_port, db_password } = dbRec;
+    if (db_type === 'postgres') {
+        const c = new (require('pg').Client)({ host: '127.0.0.1', port: 5432, user: 'postgres', database: 'postgres' });
+        await c.connect();
+        await c.query("ALTER USER \"" + db_user + "\" WITH PASSWORD '" + newPassword + "'");
+        await c.end();
+    } else if (db_type === 'mysql' || db_type === 'mariadb') {
+        const m = require('mysql2/promise');
+        const conn = await m.createConnection({ host: '127.0.0.1', port: 3306, user: 'root' });
+        await conn.query("ALTER USER '" + db_user + "'@'%' IDENTIFIED BY '" + newPassword + "'");
+        await conn.query('FLUSH PRIVILEGES');
+        await conn.end();
+    } else if (db_type === 'redis') {
+        await runCmdAsync('redis-cli', ['-p', String(db_port), '-a', db_password, 'CONFIG', 'SET', 'requirepass', newPassword]);
+    } else if (db_type === 'mongodb') {
+        const { MongoClient } = require('mongodb');
+        const mc = new MongoClient('mongodb://127.0.0.1:27017', { serverSelectionTimeoutMS: 4000 });
+        await mc.connect();
+        await mc.db(db_name).updateUser(db_user, { pwd: newPassword, roles: [{ role: 'readWrite', db: db_name }] });
+        await mc.close();
+    }
+}
+
 app.get('/api/databases', auth, async (req, res) => {
     const session = req.session;
     const admin = await isAdmin(session);
     const dbs = admin ? await db.getDatabases() : await db.getDatabases(session.id);
     res.json(dbs.map(d => ({ ...d, db_password: d.db_password ? '***' : null })));
 });
+app.get('/api/db-engines', auth, (req, res) => {
+    res.json({
+        postgres: DB_ENGINE.postgres,
+        mysql: DB_ENGINE.mysql,
+        redis: DB_ENGINE.redis,
+        mongodb: DB_ENGINE.mongodb,
+        mongodInstalled: fs.existsSync('/usr/local/bin/mongod'),
+        ports: DB_ENGINE_PORTS
+    });
+});
 app.post('/api/databases', auth, async (req, res) => {
     const session = req.session;
     const { dbType, dbName } = req.body;
-    if (!dbName || !dbName.match(/^[a-z][a-z0-9_]{2,29}$/i)) return res.status(400).json({ error: 'Nome invalido' });
+    const type = String(dbType || 'postgres').toLowerCase();
+    if (!DB_ALLOWED.includes(type)) return res.status(400).json({ error: 'Tipo de banco invalido' });
+    if (!dbName || !dbName.match(/^[a-z][a-z0-9_]{2,29}$/)) return res.status(400).json({ error: 'Nome invalido (minimo 3, sem espacos, minusculas)' });
     const existing = await db.getDatabases(session.id);
-    if (existing.length >= 3) return res.status(400).json({ error: 'Limite de 3 bancos por usuario' });
+    if (existing.length >= 5) return res.status(400).json({ error: 'Limite de 5 bancos por usuario' });
     const user = dbName + '_user';
     const password = crypto.randomBytes(16).toString('hex');
-    const host = process.env.DB_HOST || 'localhost';
-    const port = parseInt(process.env.DB_PORT) || 5432;
     try {
-        const pool = new (require('pg').Pool)({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-        await pool.query('CREATE DATABASE "' + dbName + '"');
-        await pool.query("CREATE USER " + user + " WITH PASSWORD '" + password + "'");
-        await pool.query('GRANT ALL PRIVILEGES ON DATABASE "' + dbName + '" TO ' + user);
-        await pool.query('GRANT ALL ON SCHEMA public TO ' + user);
-        await pool.end();
-    } catch(e) {
-        console.error('Erro ao criar banco real:', e.message);
-        try {
-            const pool = new (require('pg').Pool)({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-            await pool.query('CREATE DATABASE "' + dbName + '"');
-            await pool.end();
-        } catch(e2) { console.error('Erro ao criar banco (tentativa 2):', e2.message); }
+        let ready = false;
+        if (type === 'postgres') ready = await ensurePostgres();
+        else if (type === 'mysql' || type === 'mariadb') ready = await ensureMysql();
+        else if (type === 'redis') ready = await ensureRedis();
+        else if (type === 'mongodb') ready = await ensureMongo();
+        else if (type === 'sqlite') ready = true;
+        if (!ready) return res.status(503).json({ error: 'Engine do banco nao esta disponivel no servidor no momento' });
+        const prov = await provisionDb(type, dbName, user, password);
+        const dbRecord = await db.createDatabase({ userId: session.id, dbType: type, dbName, dbUser: prov.user, dbPassword: password, dbHost: prov.host, dbPort: prov.port });
+        if (!dbRecord) {
+            try { await dropProvisioned({ db_type: type, db_name: dbName, db_user: user, db_password: password, db_port: prov.port }); } catch (e) {}
+            return res.status(500).json({ error: 'Erro ao salvar registro do banco' });
+        }
+        res.json({ success: true, db: { ...dbRecord, db_password: password } });
+    } catch (e) {
+        console.error('Erro ao criar banco:', e.message);
+        res.status(500).json({ error: 'Erro ao criar banco: ' + e.message });
     }
-    const dbRecord = await db.createDatabase({ userId: session.id, dbType: dbType || 'postgres', dbName, dbUser: user, dbPassword: password, dbHost: host, dbPort: port });
-    res.json({ success: true, db: { ...dbRecord, db_password: password } });
 });
 app.delete('/api/databases/:id', auth, async (req, res) => {
     const session = req.session;
@@ -1081,12 +1315,7 @@ app.delete('/api/databases/:id', auth, async (req, res) => {
     const dbRec = await db.getDatabaseById(parseInt(req.params.id));
     if (!dbRec) return res.status(404).json({ error: 'Banco nao encontrado' });
     if (!admin && dbRec.user_id !== session.id) return res.status(403).json({ error: 'Sem permissao' });
-    try {
-        const pool = new (require('pg').Pool)({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-        await pool.query('DROP DATABASE IF EXISTS "' + dbRec.db_name + '"');
-        await pool.query('DROP USER IF EXISTS ' + dbRec.db_user);
-        await pool.end();
-    } catch(e) { console.error('Erro ao deletar banco real:', e.message); }
+    try { await dropProvisioned(dbRec); } catch (e) { console.error('Erro ao dropar banco real:', e.message); }
     await db.deleteDatabase(parseInt(req.params.id));
     res.json({ success: true });
 });
@@ -1097,11 +1326,7 @@ app.post('/api/databases/:id/reset-password', auth, async (req, res) => {
     if (!dbRec) return res.status(404).json({ error: 'Banco nao encontrado' });
     if (!admin && dbRec.user_id !== session.id) return res.status(403).json({ error: 'Sem permissao' });
     const newPassword = crypto.randomBytes(16).toString('hex');
-    try {
-        const pool = new (require('pg').Pool)({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-        await pool.query("ALTER USER " + dbRec.db_user + " WITH PASSWORD '" + newPassword + "'");
-        await pool.end();
-    } catch(e) { console.error('Erro ao resetar senha:', e.message); }
+    try { await resetProvisionedPassword(dbRec, newPassword); } catch (e) { console.error('Erro ao resetar senha:', e.message); }
     await db.resetDbPassword(parseInt(req.params.id), newPassword);
     res.json({ success: true, newPassword });
 });
