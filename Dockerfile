@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mariadb-server mariadb-client \
     redis-server \
     sqlite3 \
+    util-linux \
     curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

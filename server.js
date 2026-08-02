@@ -304,6 +304,27 @@ function runCmdAsync(cmd, args, opts) {
     });
 }
 
+function runCmdOut(cmd, args, opts) {
+    return new Promise((resolve) => {
+        let child;
+        let out = '';
+        try { child = spawn(cmd, args, { ...opts, stdio: 'pipe' }); }
+        catch(e) { return resolve({ ok: false, out: 'spawn error: ' + e.message }); }
+        const killer = setTimeout(() => { try { child.kill('SIGKILL'); } catch(e) {} }, 300000);
+        child.stdout && child.stdout.on('data', d => out += d.toString());
+        child.stderr && child.stderr.on('data', d => out += d.toString());
+        child.on('error', (e) => { clearTimeout(killer); resolve({ ok: false, out: out + '\nspawn error: ' + e.message }); });
+        child.on('close', (code) => { clearTimeout(killer); resolve({ ok: code === 0, out }); });
+    });
+}
+
+async function runAs(user, args) {
+    const r1 = await runCmdOut('runuser', ['-u', user, '--', ...args]);
+    if (r1.ok) return r1;
+    const shell = args.map(a => (a.includes(' ') ? '"' + a + '"' : a)).join(' ');
+    return runCmdOut('su', [user, '-c', shell]);
+}
+
 async function startBotProcess(name) {
     const botPath = getBotPath(name);
     const found = findMainFile(botPath);
@@ -1043,6 +1064,7 @@ app.post('/api/purchases/:id/reject', adminOnly, async (req, res) => {
 
 // === DATABASES (in-container engines) ===
 const DB_ENGINE = { postgres: false, mysql: false, redis: false, mongodb: false };
+const dbEngineLog = {};
 const DB_ALLOWED = ['postgres', 'mongodb', 'mysql', 'redis', 'mariadb', 'sqlite'];
 const DB_ENGINE_PORTS = { postgres: 5432, mysql: 3306, mariadb: 3306, redis: 6379, mongodb: 27017 };
 let redisNextPort = 6380;
@@ -1067,28 +1089,28 @@ async function waitForPort(port, attempts, checkFn) {
 
 async function ensurePostgres() {
     const pgBin = pgBinDir();
-    if (!pgBin) return false;
+    if (!pgBin) { dbEngineLog.postgres = 'pasta de binarios postgres nao encontrada'; console.error('ensurePostgres:', dbEngineLog.postgres); return false; }
     const data = path.join(PERSIST_ROOT, 'pgdata');
     try {
         if (!fs.existsSync(path.join(data, 'PG_VERSION'))) {
             fs.mkdirSync(data, { recursive: true });
             await runCmdAsync('chown', ['-R', 'postgres:postgres', data]);
-            const init = await runCmdAsync('su', ['postgres', '-c', pgBin + '/initdb -D ' + data + ' -A trust -U postgres --no-locale --encoding=UTF8']);
-            if (!init) return false;
+            const init = await runAs('postgres', [pgBin + '/initdb', '-D', data, '-A', 'trust', '-U', 'postgres', '--no-locale', '--encoding=UTF8']);
+            if (!init.ok) { dbEngineLog.postgres = 'initdb: ' + init.out.slice(0, 800); console.error('ensurePostgres:', dbEngineLog.postgres); return false; }
         }
         if (!DB_ENGINE.postgres) {
-            const started = await runCmdAsync('su', ['postgres', '-c', pgBin + '/pg_ctl -D ' + data + ' -l ' + data + '/server.log -o "-p 5432 -c listen_addresses=127.0.0.1" -w start']);
-            if (!started) {
-                const check = await waitForPort(5432, 10, async () => {
-                    const c = new (require('pg').Client)({ host: '127.0.0.1', port: 5432, user: 'postgres', database: 'postgres' });
-                    await c.connect(); await c.end(); return true;
-                });
-                if (!check) return false;
-            }
+            const started = await runAs('postgres', [pgBin + '/pg_ctl', '-D', data, '-l', data + '/server.log', '-o', '-p 5432 -c listen_addresses=127.0.0.1', '-w', 'start']);
+            if (!started.ok) dbEngineLog.postgres = 'pg_ctl: ' + started.out.slice(0, 800);
         }
+        const check = await waitForPort(5432, 15, async () => {
+            const c = new (require('pg').Client)({ host: '127.0.0.1', port: 5432, user: 'postgres', database: 'postgres', connectionTimeoutMillis: 2000 });
+            await c.connect(); await c.end(); return true;
+        });
+        if (!check) { dbEngineLog.postgres = (dbEngineLog.postgres || '') + ' | porta 5432 nao respondeu'; console.error('ensurePostgres:', dbEngineLog.postgres); return false; }
         DB_ENGINE.postgres = true;
+        dbEngineLog.postgres = 'ok';
         return true;
-    } catch (e) { console.error('ensurePostgres error:', e.message); return false; }
+    } catch (e) { dbEngineLog.postgres = 'erro: ' + e.message; console.error('ensurePostgres error:', e.message); return false; }
 }
 
 async function ensureMysql() {
@@ -1102,14 +1124,13 @@ async function ensureMysql() {
         }
         if (!DB_ENGINE.mysql) {
             const started = await runCmdAsync('mariadbd', ['--user=mysql', '--datadir=' + data, '--port=3306', '--bind-address=127.0.0.1', '--socket=' + data + '/mysqld.sock', '--pid-file=' + data + '/mysqld.pid', '--daemonize', '--log-error=' + data + '/mysqld.log', '--innodb-buffer-pool-size=64M']);
-            if (!started) {
-                const check = await waitForPort(3306, 10, async () => {
-                    const m = require('mysql2/promise');
-                    const conn = await m.createConnection({ host: '127.0.0.1', port: 3306, user: 'root' });
-                    await conn.query('SELECT 1'); await conn.end(); return true;
-                });
-                if (!check) return false;
-            }
+            if (!started) console.error('ensureMysql: mariadbd --daemonize falhou');
+            const check = await waitForPort(3306, 15, async () => {
+                const m = require('mysql2/promise');
+                const conn = await m.createConnection({ host: '127.0.0.1', port: 3306, user: 'root', connectTimeout: 2000 });
+                await conn.query('SELECT 1'); await conn.end(); return true;
+            });
+            if (!check) return false;
         }
         DB_ENGINE.mysql = true;
         return true;
@@ -1122,7 +1143,8 @@ async function ensureRedis() {
         fs.mkdirSync(data, { recursive: true });
         await runCmdAsync('chown', ['-R', 'redis:redis', data]);
         if (!DB_ENGINE.redis) {
-            await runCmdAsync('su', ['redis', '-s', '/bin/sh', '-c', 'redis-server --port 6379 --bind 127.0.0.1 --dir ' + data + ' --dbfilename dump.rdb --appendonly yes --daemonize yes --logfile ' + data + '/redis.log']);
+            const started = await runAs('redis', ['redis-server', '--port', '6379', '--bind', '127.0.0.1', '--dir', data, '--dbfilename', 'dump.rdb', '--appendonly', 'yes', '--daemonize', 'yes', '--logfile', data + '/redis.log']);
+            if (!started.ok) console.error('ensureRedis start:', started.out);
             const check = await waitForPort(6379, 10, async () => {
                 const out = require('child_process').execFileSync('redis-cli', ['-p', '6379', 'ping'], { stdio: 'pipe', timeout: 3000 });
                 return String(out).includes('PONG');
@@ -1186,8 +1208,8 @@ async function provisionDb(dbType, dbName, user, password) {
         const dir = path.join(PERSIST_ROOT, 'redisdb', dbName);
         fs.mkdirSync(dir, { recursive: true });
         await runCmdAsync('chown', ['-R', 'redis:redis', path.join(PERSIST_ROOT, 'redisdb')]);
-        const ok = await runCmdAsync('su', ['redis', '-s', '/bin/sh', '-c', 'redis-server --port ' + port + ' --bind 127.0.0.1 --requirepass ' + password + ' --dir ' + dir + ' --appendonly yes --daemonize yes --logfile ' + dir + '/redis.log']);
-        if (!ok) throw new Error('Falha ao iniciar Redis na porta ' + port);
+        const ok = await runAs('redis', ['redis-server', '--port', String(port), '--bind', '127.0.0.1', '--requirepass', password, '--dir', dir, '--appendonly', 'yes', '--daemonize', 'yes', '--logfile', dir + '/redis.log']);
+        if (!ok.ok) { console.error('redis provision:', ok.out); throw new Error('Falha ao iniciar Redis na porta ' + port); }
         return { host: 'localhost', port, user: 'default' };
     }
     if (dbType === 'mongodb') {
@@ -1278,6 +1300,17 @@ app.get('/api/db-engines', auth, (req, res) => {
         mongodInstalled: fs.existsSync('/usr/local/bin/mongod'),
         ports: DB_ENGINE_PORTS
     });
+});
+app.get('/api/admin/db-debug', adminOnly, (req, res) => {
+    const bins = ['mongod', 'mariadbd', 'mysqld', 'redis-server', 'redis-cli', 'runuser', 'su', 'sqlite3'];
+    const present = {};
+    for (const b of bins) {
+        try { present[b] = require('child_process').execFileSync('which', [b], { stdio: 'pipe', timeout: 3000 }).toString().trim(); }
+        catch (e) { present[b] = null; }
+    }
+    let pgdir = null;
+    try { if (fs.existsSync('/usr/lib/postgresql')) pgdir = fs.readdirSync('/usr/lib/postgresql'); } catch (e) {}
+    res.json({ bins: present, pgVersions: pgdir, engineLog: dbEngineLog });
 });
 app.post('/api/databases', auth, async (req, res) => {
     const session = req.session;

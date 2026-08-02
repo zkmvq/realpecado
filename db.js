@@ -243,7 +243,7 @@ async function saveTicketInfo(id, info) {
 async function createDatabase(data) {
     try {
         if (dbType === 'pg') { const r = await pgPool.query('INSERT INTO databases (user_id, db_type, db_name, db_user, db_password, db_host, db_port) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *', [data.userId, data.dbType, data.dbName, data.dbUser, data.dbPassword, data.dbHost || 'localhost', data.dbPort || 5432]); return r.rows[0]; }
-        if (dbType === 'json') { const s = jsonStore('databases'); const id = (s.data._nextId || 0) + 1; s.data._nextId = id; const rec = { id, user_id: data.userId, db_type: data.dbType, db_name: data.dbName, db_user: data.dbUser, db_password: data.dbPassword, db_host: data.dbHost || 'localhost', db_port: data.dbPort || 5432, status: 'active', created_at: new Date().toISOString() }; s.data[id] = rec; jsonSave('databases'); return rec; }
+        if (dbType === 'json') { const s = jsonStore('databases'); const id = (s.data._nextId || 0) + 1; s.data._nextId = id; const rec = { id, user_id: data.userId, db_type: data.dbType, db_name: data.dbName, db_user: data.dbUser, db_password: data.dbPassword, db_host: data.dbHost || 'localhost', db_port: data.dbPort !== undefined ? data.dbPort : 5432, status: 'active', created_at: new Date().toISOString() }; s.data[id] = rec; jsonSave('databases'); return rec; }
     } catch (e) { console.error('createDatabase error:', e.message); }
     return null;
 }
