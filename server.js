@@ -56,6 +56,7 @@ const upload = multer({
 let sessions = {};
 let bots = {};
 let lastLogs = {};
+let installingBots = new Set();
 let activityLogs = [];
 let announcements = [];
 let lastAnnouncementId = 0;
@@ -73,7 +74,7 @@ const loginLimiter = rateLimit({
 });
 
 const uploadLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, max: 20,
+    windowMs: 60 * 60 * 1000, max: 40,
     message: { error: 'Muitos uploads de bot. Aguarde um pouco.' }
 });
 
@@ -291,7 +292,18 @@ function getBotStatus(name) {
     } catch (e) { return { running: false }; }
 }
 
-function startBotProcess(name) {
+function runCmdAsync(cmd, args, opts) {
+    return new Promise((resolve) => {
+        let child;
+        try { child = spawn(cmd, args, { ...opts, stdio: 'pipe' }); }
+        catch(e) { return resolve(false); }
+        const killer = setTimeout(() => { try { child.kill('SIGKILL'); } catch(e) {} }, 600000);
+        child.on('error', () => { clearTimeout(killer); resolve(false); });
+        child.on('close', (code) => { clearTimeout(killer); resolve(code === 0); });
+    });
+}
+
+async function startBotProcess(name) {
     const botPath = getBotPath(name);
     const found = findMainFile(botPath);
     if (!found) return { error: 'Nenhum entry point encontrado (nao achei index.js/main.js ou main.py/run.py)' };
@@ -299,19 +311,24 @@ function startBotProcess(name) {
     const runtime = found.runtime;
     const runDir = path.dirname(mainFile);
     try {
+        if (installingBots.has(name)) return { error: 'Bot ja esta instalando dependencias, aguarde' };
         if (runtime === 'node') {
             if (fs.existsSync(path.join(runDir, 'package.json')) && !fs.existsSync(path.join(runDir, 'node_modules'))) {
-                try {
-                    execSync('npm install --prefer-offline', { cwd: runDir, stdio: 'pipe', timeout: 600000 });
-                } catch(e) { return { error: 'Erro ao instalar dependencias: ' + e.message }; }
+                installingBots.add(name);
+                db.saveBot(name, { status: 'installing', startedAt: new Date().toISOString() });
+                const ok = await runCmdAsync('npm', ['install', '--prefer-offline'], { cwd: runDir });
+                installingBots.delete(name);
+                if (!ok) { db.saveBot(name, { status: 'stopped', stoppedAt: new Date().toISOString(), exitCode: 1 }); return { error: 'Erro ao instalar dependencias npm' }; }
             }
         } else {
             const py = getPythonBin();
             if (!py) return { error: 'Python nao encontrado no servidor' };
             if (fs.existsSync(path.join(runDir, 'requirements.txt'))) {
-                try {
-                    execSync(py + ' -m pip install -r requirements.txt --quiet --break-system-packages', { cwd: runDir, stdio: 'pipe', timeout: 600000 });
-                } catch(e) { return { error: 'Erro ao instalar dependencias python: ' + e.message }; }
+                installingBots.add(name);
+                db.saveBot(name, { status: 'installing', startedAt: new Date().toISOString() });
+                const ok = await runCmdAsync(py, ['-m', 'pip', 'install', '-r', 'requirements.txt', '--quiet', '--break-system-packages'], { cwd: runDir });
+                installingBots.delete(name);
+                if (!ok) { db.saveBot(name, { status: 'stopped', stoppedAt: new Date().toISOString(), exitCode: 1 }); return { error: 'Erro ao instalar dependencias python' }; }
             }
         }
         if (bots[name]) {
@@ -319,6 +336,7 @@ function startBotProcess(name) {
             delete bots[name];
         }
         const runner = runtime === 'node' ? 'node' : getPythonBin();
+        if (!runner) return { error: 'Python nao encontrado no servidor' };
         const proc = spawn(runner, [mainFile], {
             cwd: runDir,
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -525,8 +543,24 @@ app.post('/api/admin/cleanup', auth, async (req, res) => {
             } catch(e) {}
         }
     }
-    logActivity('cleanup', 'Limpou ' + removed.length + ' uploads temporarios (' + freedMB.toFixed(1) + 'MB)', s);
-    res.json({ success: true, removed: removed.length, freedMB: +freedMB.toFixed(2) });
+    const pruned = [];
+    let prunedMB = 0;
+    if (fs.existsSync(BOTS_DIR)) {
+        for (const name of fs.readdirSync(BOTS_DIR)) {
+            const nmDir = path.join(BOTS_DIR, name, 'node_modules');
+            if (fs.existsSync(nmDir) && !bots[name] && !installingBots.has(name)) {
+                try {
+                    prunedMB += dirSizeBytes(nmDir) / 1048576;
+                    fs.rmSync(nmDir, { recursive: true, force: true });
+                    pruned.push(name);
+                } catch(e) {}
+            }
+        }
+    }
+    const msg = 'Limpou ' + removed.length + ' uploads temporarios (' + freedMB.toFixed(1) + 'MB)';
+    const msg2 = pruned.length ? ' e removeu node_modules de ' + pruned.join(', ') + ' (' + prunedMB.toFixed(1) + 'MB)' : '';
+    logActivity('cleanup', msg + msg2, s);
+    res.json({ success: true, removed: removed.length, freedMB: +(freedMB + prunedMB).toFixed(2), pruned });
 });
 
 function cleanupStaleUploads() {
@@ -602,8 +636,7 @@ app.post('/api/bots', auth, uploadLimiter, checkDiskSpace, upload.single('file')
                 const deps = { ...pkg.dependencies, ...pkg.devDependencies };
                 if (deps['discord.js'] && deps['discord.js'].startsWith('^14')) lang = 'Node.js';
                 await db.saveBot(name, { owner: session.id, language: lang, status: 'installing', createdAt: new Date().toISOString() });
-                execSync('npm install --prefer-offline', { cwd: botDir, stdio: 'pipe', timeout: 600000 });
-                await db.saveBot(name, { owner: session.id, language: lang, status: 'stopped', createdAt: new Date().toISOString() });
+                runCmdAsync('npm', ['install', '--prefer-offline'], { cwd: botDir }).then(() => db.saveBot(name, { owner: session.id, language: lang, status: 'stopped', createdAt: new Date().toISOString() }));
             } catch(e) {
                 await db.saveBot(name, { owner: session.id, language: lang, status: 'stopped', createdAt: new Date().toISOString() });
             }
@@ -626,7 +659,7 @@ app.post('/api/bots/:name/start', auth, async (req, res) => {
     if (!admin && b.owner !== session.id) return res.status(403).json({ error: 'Sem permissao' });
     const botDir = getBotPath(name);
     if (!fs.existsSync(botDir)) return res.status(404).json({ error: 'Diretorio do bot nao encontrado' });
-    const result = startBotProcess(name);
+    const result = await startBotProcess(name);
     if (result.error) return res.status(500).json({ error: result.error });
     logActivity('bot_start', 'Ligou bot ' + name, session);
     res.json({ success: true });
