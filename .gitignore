@@ -1,5 +1,4 @@
 node_modules/
-uploads/
 bots/
-data/
+*.log
 .env

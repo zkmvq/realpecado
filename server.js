@@ -1,1554 +1,869 @@
 const express = require('express');
-const crypto = require('crypto');
-const path = require('path');
-const fs = require('fs');
-const { spawn, execSync } = require('child_process');
-const rateLimit = require('express-rate-limit');
-const morgan = require('morgan');
 const multer = require('multer');
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const AdmZip = require('adm-zip');
-const db = require('./db');
+const crypto = require('crypto');
 
 const app = express();
-app.set('trust proxy', true);
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
+const BOTS_DIR = path.join(__dirname, 'bots');
+const PASSWORD = '/realpecado';
 
-const SITE_BANNER_URL = '/realpecado_mc_ig.png';
+const DISCORD_CLIENT_ID = '1522442710315700315';
+const DISCORD_CLIENT_SECRET = 'NBYOWa2f28QgSnYMU-qZWsgKkXoRGdob';
+const DISCORD_REDIRECT_URI = 'https://realpecado.onrender.com/auth/discord/callback';
 
-const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
-const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || process.env.ISCORD_CLIENT_SECRET;
-const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || 'https://realpecado.up.railway.app/auth/discord/callback';
-const PASSWORD = process.env.PASSWORD || 'admin';
 const OWNER_ID = '1473070694425301205';
-const PLANS_ACCESS_IDS = ['1526570298743197766'];
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
-const DISCORD_TICKET_CATEGORY_ID = process.env.DISCORD_TICKET_CATEGORY_ID || '';
-const DISCORD_API = 'https://discord.com/api/v10';
 
-app.use(morgan('short'));
+const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
+const STAFFS_FILE = path.join(__dirname, 'staffs.json');
+const BANNED_FILE = path.join(__dirname, 'banned.json');
+const BOTS_META_FILE = path.join(__dirname, 'bots-meta.json');
 
-app.use((req, res, next) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; media-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
-    next();
-});
-app.use(express.json({ limit: '600mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use('/public', express.static(path.join(__dirname, 'public')));
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-
-const BOTS_DIR = process.env.BOTS_DIR || path.join(__dirname, 'bots');
-if (!fs.existsSync(BOTS_DIR)) fs.mkdirSync(BOTS_DIR, { recursive: true });
-const PERSIST_ROOT = process.env.PERSIST_DIR || path.dirname(BOTS_DIR);
-const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-
-const upload = multer({
-    dest: UPLOADS_DIR,
-    limits: { fileSize: 200 * 1024 * 1024, files: 1 },
-    fileFilter: (req, file, cb) => { if (!file.originalname.endsWith('.zip')) cb(new Error('Apenas .ZIP')); else cb(null, true); }
-});
-
-let sessions = {};
-let bots = {};
-let lastLogs = {};
-let installingBots = new Set();
-let activityLogs = [];
-let announcements = [];
-let lastAnnouncementId = 0;
-let autoAnnouncement = { enabled: false, message: '', intervalMs: 600000 };
-let autoAnnounceTimer = null;
-const MAX_ACTIVITY_LOGS = 200;
-
-const failedLogins = {};
-const BRUTE_THRESHOLD = 5;
-const BRUTE_WINDOW = 30 * 60 * 1000;
-
-const loginLimiter = rateLimit({
-    windowMs: 60 * 1000, max: 10,
-    message: { error: 'Muitas tentativas. Aguarde.' }
-});
-
-const uploadLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, max: 40,
-    message: { error: 'Muitos uploads de bot. Aguarde um pouco.' }
-});
-
-function checkBruteForce(ip) {
-    const entry = failedLogins[ip];
-    if (!entry) return false;
-    if (Date.now() - entry.time > BRUTE_WINDOW) { delete failedLogins[ip]; return false; }
-    return entry.count >= BRUTE_THRESHOLD;
+// === LOGS DO SERVIDOR ===
+const serverLogs = [];
+function slog(msg, type = 'info') {
+    const entry = {
+        time: new Date().toLocaleTimeString('pt-BR'),
+        date: new Date().toLocaleDateString('pt-BR'),
+        ts: Date.now(),
+        type, // info | warn | error | bot | auth
+        msg
+    };
+    serverLogs.push(entry);
+    if (serverLogs.length > 1000) serverLogs.shift();
+    console.log(`[${entry.date} ${entry.time}] [${type.toUpperCase()}] ${msg}`);
 }
 
-function cookieAttrs(req) {
-    const proto = req.headers['x-forwarded-proto'] || 'http';
-    const secure = proto === 'https';
-    return `HttpOnly; Path=/; SameSite=Lax${secure ? '; Secure' : ''}`;
-}
-function clearCookieAttrs(req) {
-    const proto = req.headers['x-forwarded-proto'] || 'http';
-    const secure = proto === 'https';
-    return `session=; HttpOnly; Path=/; Max-Age=0${secure ? '; Secure' : ''}`;
-}
-
-function getSessionSync(req) {
-    const cookie = req.headers.cookie || '';
-    const match = cookie.match(/session=([^;]+)/);
-    if (match && sessions[match[1]]) return sessions[match[1]];
-    const pass = req.headers['x-auth-password'];
-    if (pass && pass === PASSWORD) return { type: 'password', username: 'Admin (Senha)', id: 'password-user' };
-    return null;
-}
-
-async function getSession(req) {
-    const cookie = req.headers.cookie || '';
-    const match = cookie.match(/session=([^;]+)/);
-    if (match) {
-        if (sessions[match[1]]) return sessions[match[1]];
-        const fromDb = await db.getSession(match[1]);
-        if (fromDb) { sessions[match[1]] = fromDb; return fromDb; }
+// Sessoes persistidas em disco para sobreviver a reinicializacoes
+function loadSessions() {
+    if (fs.existsSync(SESSIONS_FILE)) {
+        try { return JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8')); } catch (e) { return {}; }
     }
-    const pass = req.headers['x-auth-password'];
-    if (pass && pass === PASSWORD) return { type: 'password', username: 'Admin (Senha)', id: 'password-user' };
-    return null;
+    return {};
 }
 
-function isOwner(session) { return session && session.id === OWNER_ID; }
-async function isAdmin(session) {
-    if (!session) return false;
-    if (isOwner(session)) return true;
-    if (session.type === 'password') return true;
-    const admins = await db.getAdmins();
-    return admins.includes(session.id);
+function saveSessions(data) {
+    try { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(data, null, 2)); } catch(e) {}
 }
 
-function auth(req, res, next) { getSession(req).then(s => { if (!s) return res.status(401).json({ error: 'Nao autorizado' }); req.session = s; next(); }).catch(() => res.status(401).json({ error: 'Erro auth' })); }
-function adminOnly(req, res, next) { auth(req, res, () => { isAdmin(req.session).then(a => { if (!a) return res.status(403).json({ error: 'Apenas admin' }); next(); }); }); }
-function ownerOnly(req, res, next) { auth(req, res, () => { if (!isOwner(req.session)) return res.status(403).json({ error: 'Apenas owner' }); next(); }); }
+const sessions = loadSessions();
 
-function logActivity(type, detail, user) {
-    activityLogs.unshift({ type, detail, user: user ? user.username || user.id : 'Sistema', ts: new Date().toISOString() });
-    if (activityLogs.length > MAX_ACTIVITY_LOGS) activityLogs.length = MAX_ACTIVITY_LOGS;
+function loadBotsMeta() {
+    if (fs.existsSync(BOTS_META_FILE)) {
+        try { return JSON.parse(fs.readFileSync(BOTS_META_FILE, 'utf8')); } catch (e) { return {}; }
+    }
+    return {};
 }
 
-// === DISCORD OAUTH ===
-app.get('/auth/discord', (req, res) => {
-    if (!DISCORD_CLIENT_SECRET) return res.redirect('/?error=' + encodeURIComponent('DISCORD_CLIENT_SECRET nao configurado'));
-    const params = new URLSearchParams({ client_id: DISCORD_CLIENT_ID, redirect_uri: DISCORD_REDIRECT_URI, response_type: 'code', scope: 'identify' });
-    res.redirect('https://discord.com/api/oauth2/authorize?' + params);
-});
+function saveBotsMeta(meta) {
+    fs.writeFileSync(BOTS_META_FILE, JSON.stringify(meta, null, 2));
+}
 
-app.get('/auth/discord/callback', async (req, res) => {
-    const { code, error: discordError } = req.query;
-    if (discordError) return res.redirect('/?error=' + encodeURIComponent(discordError));
-    if (!code) return res.redirect('/?error=no_code');
-    try {
-        const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
-            method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ client_id: DISCORD_CLIENT_ID, client_secret: DISCORD_CLIENT_SECRET, code, grant_type: 'authorization_code', redirect_uri: DISCORD_REDIRECT_URI, scope: 'identify' })
-        });
-        const tokenData = await tokenRes.json();
-        if (!tokenData.access_token) {
-            console.error('OAuth FALHOU:', JSON.stringify(tokenData));
-            return res.redirect('/?error=' + encodeURIComponent(tokenData.error_description || tokenData.error || 'Token exchange falhou'));
-        }
-        const userRes = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: 'Bearer ' + tokenData.access_token } });
-        const user = await userRes.json();
-        console.log('OAuth login ok:', user.username);
-        if (await db.isBanned(user.id)) return res.redirect('/?banned=1');
-        const sessionToken = crypto.randomBytes(32).toString('hex');
-        sessions[sessionToken] = { type: 'discord', id: user.id, username: user.username, discriminator: user.discriminator, avatar: user.avatar, banner: user.banner || null, banner_color: user.banner_color || null };
-        await db.saveSession(sessionToken, { ...sessions[sessionToken], createdAt: new Date().toISOString() });
-        await db.upsertStaff(user.id, { username: user.username, discriminator: user.discriminator || '0', avatar: user.avatar, lastLogin: new Date().toISOString(), $inc: { loginCount: 1 } });
-        logActivity('login', 'Login via Discord', { id: user.id, username: user.username });
-        res.setHeader('Set-Cookie', 'session=' + sessionToken + '; ' + cookieAttrs(req));
-        res.redirect('/');
-    } catch (e) {
-        console.error('OAuth callback error:', e.message);
-        res.redirect('/?error=' + encodeURIComponent(e.message));
+function setBotOwner(botName, ownerId) {
+    const meta = loadBotsMeta();
+    meta[botName] = { owner: ownerId, createdAt: new Date().toISOString() };
+    saveBotsMeta(meta);
+}
+
+function getBotOwner(botName) {
+    const meta = loadBotsMeta();
+    return meta[botName] ? meta[botName].owner : null;
+}
+
+function loadStaffs() {
+    if (fs.existsSync(STAFFS_FILE)) {
+        try { return JSON.parse(fs.readFileSync(STAFFS_FILE, 'utf8')); } catch (e) { return []; }
     }
-});
+    return [];
+}
 
-app.post('/auth/password', loginLimiter, async (req, res) => {
-    const ip = req.ip || req.connection.remoteAddress;
-    if (checkBruteForce(ip)) {
-        logActivity('brute_force', 'Tentativa de brute force de ' + ip, null);
-        return res.status(429).json({ error: 'Bloqueado por multiplas tentativas. Aguarde 30 minutos.' });
+function saveStaffs(staffs) {
+    fs.writeFileSync(STAFFS_FILE, JSON.stringify(staffs, null, 2));
+}
+
+function loadBanned() {
+    if (fs.existsSync(BANNED_FILE)) {
+        try { return JSON.parse(fs.readFileSync(BANNED_FILE, 'utf8')); } catch (e) { return []; }
     }
-    const { password } = req.body;
-    if (typeof password !== 'string' || password !== PASSWORD) {
-        if (failedLogins[ip]) failedLogins[ip].count++; else failedLogins[ip] = { count: 1, time: Date.now() };
-        return res.status(401).json({ error: 'Senha incorreta' });
-    }
-    if (failedLogins[ip]) failedLogins[ip].count = 0;
-    const sessionToken = crypto.randomBytes(32).toString('hex');
-    sessions[sessionToken] = { type: 'password', username: 'Admin (Senha)', id: 'password-user' };
-    await db.saveSession(sessionToken, { type: 'password', username: 'Admin (Senha)', id: 'password-user', createdAt: new Date().toISOString() });
-    logActivity('login', 'Login via senha', { id: 'password-user', username: 'Admin' });
-    res.setHeader('Set-Cookie', 'session=' + sessionToken + '; ' + cookieAttrs(req));
-    res.json({ success: true });
-});
+    return [];
+}
 
-app.get('/auth/logout', async (req, res) => {
-    const cookie = req.headers.cookie || '';
-    const match = cookie.match(/session=([^;]+)/);
-    if (match) { delete sessions[match[1]]; await db.deleteSession(match[1]); }
-    res.setHeader('Set-Cookie', clearCookieAttrs(req));
-    res.json({ success: true });
-});
+function saveBanned(banned) {
+    fs.writeFileSync(BANNED_FILE, JSON.stringify(banned, null, 2));
+}
 
-app.get('/api/me', auth, async (req, res) => {
-    const session = req.session;
-    const adminStatus = await isAdmin(session);
-    if (session.type === 'discord') {
-        try { await db.upsertStaff(session.id, { username: session.username, discriminator: session.discriminator || '0', avatar: session.avatar, lastLogin: new Date().toISOString(), $inc: { loginCount: 1 } }); } catch(e) { console.error('Erro upsertStaff em /api/me:', e.message); }
-        res.json({ id: session.id, username: session.username, discriminator: session.discriminator, avatar: session.avatar, banner: session.banner, banner_color: session.banner_color, type: 'discord', isOwner: isOwner(session), isAdmin: adminStatus, canAccessPlans: PLANS_ACCESS_IDS.includes(session.id) });
+function isBanned(id) {
+    return loadBanned().some(b => b.id === id);
+}
+
+function addStaff(user) {
+    const staffs = loadStaffs();
+    const existing = staffs.find(s => s.id === user.id);
+    if (existing) {
+        existing.loginCount = (existing.loginCount || 0) + 1;
+        existing.lastLogin = new Date().toISOString();
+        existing.username = user.username;
+        existing.avatar = user.avatar;
+        saveStaffs(staffs);
     } else {
-        res.json({ id: '0', username: 'Admin (Senha)', discriminator: '0', avatar: null, banner: null, banner_color: null, type: 'password', isOwner: false, isAdmin: true });
+        staffs.push({
+            id: user.id,
+            username: user.username,
+            discriminator: user.discriminator || '0',
+            avatar: user.avatar,
+            createdAt: new Date().toISOString(),
+            lastLogin: new Date().toISOString(),
+            loginCount: 1,
+            banned: false
+        });
+        saveStaffs(staffs);
+    }
+}
+
+function addPasswordStaff() {
+    const staffs = loadStaffs();
+    const id = 'password-admin';
+    const existing = staffs.find(s => s.id === id);
+    if (existing) {
+        existing.loginCount = (existing.loginCount || 0) + 1;
+        existing.lastLogin = new Date().toISOString();
+        saveStaffs(staffs);
+    } else {
+        staffs.push({
+            id: id,
+            username: 'Admin (Senha)',
+            discriminator: '0',
+            avatar: null,
+            createdAt: new Date().toISOString(),
+            lastLogin: new Date().toISOString(),
+            loginCount: 1,
+            banned: false
+        });
+        saveStaffs(staffs);
+    }
+}
+
+// === VERIFICACAO DE DISCO ===
+const MAX_BOTS_DIR_MB = 400; // limite em MB para a pasta bots (Railway tem ~1-2GB)
+const MAX_SINGLE_BOT_MB = 150; // maximo que um bot pode ocupar apos instalacao
+
+function getDirSizeMB(dirPath) {
+    let total = 0;
+    if (!fs.existsSync(dirPath)) return 0;
+    try {
+        const walk = (p) => {
+            const entries = fs.readdirSync(p, { withFileTypes: true });
+            for (const e of entries) {
+                const full = path.join(p, e.name);
+                try {
+                    if (e.isDirectory()) walk(full);
+                    else total += fs.statSync(full).size;
+                } catch {}
+            }
+        };
+        walk(dirPath);
+    } catch {}
+    return total / (1024 * 1024);
+}
+
+function checkDiskSpace() {
+    const usedMB = getDirSizeMB(BOTS_DIR);
+    return {
+        usedMB: Math.round(usedMB),
+        limitMB: MAX_BOTS_DIR_MB,
+        freePercent: Math.max(0, Math.round(((MAX_BOTS_DIR_MB - usedMB) / MAX_BOTS_DIR_MB) * 100)),
+        ok: usedMB < MAX_BOTS_DIR_MB
+    };
+}
+
+function isOwner(req) {
+    const session = getSession(req);
+    return session && session.type === 'discord' && session.id === OWNER_ID;
+}
+
+function ownerOnly(req, res, next) {
+    if (isOwner(req)) return next();
+    res.status(403).json({ error: 'Acesso negado' });
+}
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, os.tmpdir()),
+    filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
+});
+
+// Limite de 50MB por ZIP para evitar lotar o disco do Railway
+const upload = multer({
+    storage,
+    limits: { fileSize: 50 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase();
+        if (ext !== '.zip') return cb(new Error('Apenas arquivos .zip sao aceitos'));
+        cb(null, true);
     }
 });
 
-// === STAFFS ===
-app.get('/api/staffs', adminOnly, async (req, res) => {
-    const session = req.session;
-    const staffs = await db.getStaffs();
-    const bannedList = await db.getBanned();
-    const admins = await db.getAdmins();
-    const activeIds = new Set(Object.values(sessions).map(s => s.id));
-    const result = staffs.filter(s => {
-        if (isOwner(session)) return true;
-        if (s.id === OWNER_ID) return false;
-        return s.id !== session.id;
-    }).map(s => ({
-        id: s.id, username: s.username, discriminator: s.discriminator, avatar: s.avatar,
-        createdAt: s.createdAt, lastLogin: s.lastLogin, loginCount: s.loginCount || 1,
-        banned: bannedList.some(b => b.id === s.id),
-        isAdmin: admins.includes(s.id),
-        online: activeIds.has(s.id)
-    }));
-    res.json(result);
-});
+const bots = {};
 
-app.get('/api/users/all', ownerOnly, async (req, res) => {
-    const staffs = await db.getStaffs();
-    const bannedList = await db.getBanned();
-    const admins = await db.getAdmins();
-    const activeIds = new Set(Object.values(sessions).map(s => s.id));
-    const result = staffs.map(s => ({
-        id: s.id, username: s.username, discriminator: s.discriminator, avatar: s.avatar,
-        createdAt: s.createdAt, lastLogin: s.lastLogin, loginCount: s.loginCount || 1,
-        botCount: Object.values(bots).filter(b => b.owner === s.id).length,
-        banned: bannedList.some(b => b.id === s.id),
-        isOwner: s.id === OWNER_ID,
-        isAdmin: admins.includes(s.id),
-        online: activeIds.has(s.id)
-    }));
-    res.json(result);
-});
+function getBotDir(name) { return path.join(BOTS_DIR, name); }
 
-app.post('/api/staffs/:id/ban', adminOnly, async (req, res) => {
-    const id = req.params.id;
-    const staff = await db.getStaff(id);
-    await db.addBanned(id, { username: staff ? staff.username : 'Desconhecido', bannedAt: new Date().toISOString() });
-    logActivity('ban', 'Baniu ' + (staff ? staff.username : id), getSessionSync(req));
-    res.json({ success: true });
-});
-app.post('/api/staffs/:id/unban', ownerOnly, async (req, res) => {
-    const staff = await db.getStaff(req.params.id);
-    await db.removeBanned(req.params.id);
-    logActivity('unban', 'Desbaniu ' + (staff ? staff.username : req.params.id), getSessionSync(req));
-    res.json({ success: true });
-});
-app.post('/api/staffs/:id/makeadmin', ownerOnly, async (req, res) => {
-    const id = req.params.id;
-    const staff = await db.getStaff(id);
-    await db.addAdmin(id);
-    logActivity('make_admin', 'Tornou ' + (staff ? staff.username : id) + ' admin', getSessionSync(req));
-    res.json({ success: true });
-});
-app.post('/api/staffs/:id/removeadmin', ownerOnly, async (req, res) => {
-    const id = req.params.id;
-    const staff = await db.getStaff(id);
-    await db.removeAdmin(id);
-    logActivity('remove_admin', 'Removeu admin de ' + (staff ? staff.username : id), getSessionSync(req));
-    res.json({ success: true });
-});
+function loadBots() {
+    if (!fs.existsSync(BOTS_DIR)) fs.mkdirSync(BOTS_DIR, { recursive: true });
 
-// === BOTS ===
-function getBotPath(name) { return path.join(BOTS_DIR, name); }
-
-function getBotStatus(name) {
-    try {
-        const proc = bots[name];
-        if (proc && proc.exitCode === null) {
-            return { running: true, pid: proc.pid, uptime: Math.floor((Date.now() - proc._startedAt) / 1000) };
-        }
-        return { running: false };
-    } catch (e) { return { running: false }; }
-}
-
-function runCmdAsync(cmd, args, opts) {
-    return new Promise((resolve) => {
-        let child;
-        try { child = spawn(cmd, args, { ...opts, stdio: 'pipe' }); }
-        catch(e) { return resolve(false); }
-        const killer = setTimeout(() => { try { child.kill('SIGKILL'); } catch(e) {} }, 600000);
-        child.on('error', () => { clearTimeout(killer); resolve(false); });
-        child.on('close', (code) => { clearTimeout(killer); resolve(code === 0); });
-    });
-}
-
-function runCmdOut(cmd, args, opts) {
-    return new Promise((resolve) => {
-        let child;
-        let out = '';
-        try { child = spawn(cmd, args, { ...opts, stdio: 'pipe' }); }
-        catch(e) { return resolve({ ok: false, out: 'spawn error: ' + e.message }); }
-        const killer = setTimeout(() => { try { child.kill('SIGKILL'); } catch(e) {} }, 300000);
-        child.stdout && child.stdout.on('data', d => out += d.toString());
-        child.stderr && child.stderr.on('data', d => out += d.toString());
-        child.on('error', (e) => { clearTimeout(killer); resolve({ ok: false, out: out + '\nspawn error: ' + e.message }); });
-        child.on('close', (code) => { clearTimeout(killer); resolve({ ok: code === 0, out }); });
-    });
-}
-
-async function runAs(user, args) {
-    const r1 = await runCmdOut('runuser', ['-u', user, '--', ...args]);
-    if (r1.ok) return r1;
-    const shell = args.map(a => (a.includes(' ') ? '"' + a + '"' : a)).join(' ');
-    return runCmdOut('su', [user, '-c', shell]);
-}
-
-async function startBotProcess(name) {
-    const botPath = getBotPath(name);
-    const found = findMainFile(botPath);
-    if (!found) return { error: 'Nenhum entry point encontrado (nao achei index.js/main.js ou main.py/run.py)' };
-    const mainFile = found.file;
-    const runtime = found.runtime;
-    const runDir = path.dirname(mainFile);
-    let nodeRoot = runDir;
-    if (runtime === 'node') {
-        if (!fs.existsSync(path.join(runDir, 'package.json'))) {
-            let d = runDir;
-            while (d.startsWith(botPath) && d !== path.dirname(d)) {
-                if (fs.existsSync(path.join(d, 'package.json'))) { nodeRoot = d; break; }
-                d = path.dirname(d);
-            }
+    // Limpar bots fantasmas do metadata (existem no JSON mas nao no disco)
+    const meta = loadBotsMeta();
+    let changed = false;
+    for (const name of Object.keys(meta)) {
+        const botPath = path.join(BOTS_DIR, name);
+        if (!fs.existsSync(botPath)) {
+            slog(`Bot fantasma removido do registro: "${name}" (diretorio nao existe mais)`, 'warn');
+            delete meta[name];
+            changed = true;
         }
     }
-    try {
-        if (installingBots.has(name)) return { error: 'Bot ja esta instalando dependencias, aguarde' };
-        if (runtime === 'node') {
-            if (fs.existsSync(path.join(nodeRoot, 'package.json')) && !fs.existsSync(path.join(nodeRoot, 'node_modules'))) {
-                installingBots.add(name);
-                db.saveBot(name, { status: 'installing', startedAt: new Date().toISOString() });
-                const ok = await runCmdAsync('npm', ['install', '--prefer-offline'], { cwd: nodeRoot });
-                installingBots.delete(name);
-                if (!ok) { db.saveBot(name, { status: 'stopped', stoppedAt: new Date().toISOString(), exitCode: 1 }); return { error: 'Erro ao instalar dependencias npm' }; }
+    if (changed) saveBotsMeta(meta);
+
+    // Limpar bots em memoria que nao existem no disco
+    for (const name of Object.keys(bots)) {
+        const botPath = path.join(BOTS_DIR, name);
+        if (!fs.existsSync(botPath)) {
+            if (bots[name] && bots[name].process) {
+                try { bots[name].process.kill('SIGTERM'); } catch {}
             }
-        } else {
-            const py = getPythonBin();
-            if (!py) return { error: 'Python nao encontrado no servidor' };
-            if (fs.existsSync(path.join(runDir, 'requirements.txt'))) {
-                installingBots.add(name);
-                db.saveBot(name, { status: 'installing', startedAt: new Date().toISOString() });
-                const ok = await runCmdAsync(py, ['-m', 'pip', 'install', '-r', 'requirements.txt', '--quiet', '--break-system-packages'], { cwd: runDir });
-                installingBots.delete(name);
-                if (!ok) { db.saveBot(name, { status: 'stopped', stoppedAt: new Date().toISOString(), exitCode: 1 }); return { error: 'Erro ao instalar dependencias python' }; }
-            }
-        }
-        if (bots[name]) {
-            try { bots[name].kill(); } catch(e) {}
             delete bots[name];
         }
-        const runner = runtime === 'node' ? 'node' : getPythonBin();
-        if (!runner) return { error: 'Python nao encontrado no servidor' };
-        const proc = spawn(runner, [mainFile], {
-            cwd: runtime === 'node' ? nodeRoot : runDir,
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env: runtime === 'node' ? { ...process.env, NODE_PATH: path.join(nodeRoot, 'node_modules') } : process.env
-        });
-        proc._startedAt = Date.now();
-        proc._name = name;
-        proc.stdout.on('data', d => {
-            if (!proc._logs) proc._logs = [];
-            proc._logs.push(d.toString());
-            if (proc._logs.length > 500) proc._logs.splice(0, 100);
-        });
-        proc.stderr.on('data', d => {
-            if (!proc._logs) proc._logs = [];
-            proc._logs.push('[ERRO] ' + d.toString());
-            if (proc._logs.length > 500) proc._logs.splice(0, 100);
-        });
-        proc.on('exit', (code, signal) => {
-            console.log('Bot ' + name + ' encerrou (codigo=' + code + ' sinal=' + signal + ')');
-            lastLogs[name] = (proc._logs || []).slice(-200);
-            if (bots[name] === proc) {
-                delete bots[name];
-                db.saveBot(name, { status: 'stopped', stoppedAt: new Date().toISOString(), exitCode: code });
+    }
+
+    const folders = fs.readdirSync(BOTS_DIR);
+    for (const folder of folders) {
+        const botPath = path.join(BOTS_DIR, folder);
+        if (!fs.statSync(botPath).isDirectory()) continue;
+        if (!bots[folder]) {
+            bots[folder] = { process: null, status: 'stopped', logs: [], port: null };
+        }
+    }
+}
+
+function addLog(name, msg) {
+    if (!bots[name]) return;
+    const line = `[${new Date().toLocaleTimeString('pt-BR')}] ${msg}`;
+    bots[name].logs.push(line);
+    if (bots[name].logs.length > 500) bots[name].logs.shift();
+}
+
+function flattenBotDir(botDir, name) {
+    for (let depth = 0; depth < 5; depth++) {
+        if (fs.existsSync(path.join(botDir, 'package.json'))) return;
+        if (fs.existsSync(path.join(botDir, 'index.js'))) return;
+
+        const entries = fs.readdirSync(botDir, { withFileTypes: true });
+        const subDirs = entries.filter(e => e.isDirectory());
+
+        if (subDirs.length === 1 && entries.length === 1) {
+            const subDir = path.join(botDir, subDirs[0].name);
+            addLog(name, `Encontrei pasta unica "${subDirs[0].name}", movendo arquivos...`);
+            const subEntries = fs.readdirSync(subDir, { withFileTypes: true });
+            for (const se of subEntries) {
+                const src = path.join(subDir, se.name);
+                const dst = path.join(botDir, se.name);
+                if (fs.existsSync(dst)) continue;
+                fs.renameSync(src, dst);
             }
-        });
-        proc.on('error', err => console.error('Erro ao iniciar bot ' + name + ':', err.message));
-        bots[name] = proc;
-        db.saveBot(name, { status: 'running', startedAt: new Date().toISOString(), language: runtime === 'python' ? 'Python' : 'Node.js' });
-        db.setAutoStart(name, true);
-        return { success: true };
-    } catch (e) { return { error: e.message }; }
-}
-
-function stopBotProcess(name) {
-    if (bots[name]) {
-        try { bots[name].kill('SIGTERM'); } catch(e) {}
-        setTimeout(() => { try { if (bots[name]) bots[name].kill('SIGKILL'); } catch(e) {} }, 3000);
-        delete bots[name];
-    }
-    db.saveBot(name, { status: 'stopped', stoppedAt: new Date().toISOString() });
-    db.setAutoStart(name, false);
-    return { success: true };
-}
-
-function findMainFile(dir) {
-    const pkgPath = path.join(dir, 'package.json');
-    if (fs.existsSync(pkgPath)) {
-        try { const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')); if (pkg.main && fs.existsSync(path.join(dir, pkg.main))) return { file: path.join(dir, pkg.main), runtime: 'node' }; } catch(e) {}
-    }
-    for (const f of ['index.js', 'bot.js', 'main.js', 'app.js', 'server.js']) {
-        if (fs.existsSync(path.join(dir, f))) return { file: path.join(dir, f), runtime: 'node' };
-    }
-    for (const f of ['main.py', 'bot.py', 'run.py', 'index.py', 'app.py']) {
-        if (fs.existsSync(path.join(dir, f))) return { file: path.join(dir, f), runtime: 'python' };
-    }
-    let files = [];
-    try { files = fs.readdirSync(dir); } catch(e) { return null; }
-    const jsFiles = files.filter(f => f.endsWith('.js'));
-    if (jsFiles.length) return { file: path.join(dir, jsFiles[0]), runtime: 'node' };
-    const pyFiles = files.filter(f => f.endsWith('.py'));
-    if (pyFiles.length) return { file: path.join(dir, pyFiles[0]), runtime: 'python' };
-    const subDirs = files.filter(f => { try { return fs.statSync(path.join(dir, f)).isDirectory() && !f.startsWith('.') && f !== 'node_modules'; } catch(e) { return false; } });
-    for (const sub of subDirs) {
-        const found = findMainFile(path.join(dir, sub));
-        if (found) return found;
-    }
-    return null;
-}
-
-let PYTHON_BIN = null;
-function getPythonBin() {
-    if (PYTHON_BIN) return PYTHON_BIN;
-    for (const bin of ['python3', 'python']) {
-        try { execSync(bin + ' --version', { stdio: 'pipe', timeout: 10000 }); PYTHON_BIN = bin; return bin; } catch(e) {}
-    }
-    return null;
-}
-
-async function getBotList() {
-    const dbBots = await db.getBots();
-    const staffs = await db.getStaffs();
-    const ownerNames = {};
-    for (const s of staffs) ownerNames[s.id] = s.username;
-    return dbBots.map(b => {
-        const proc = bots[b.name];
-        const isRunning = proc && proc.exitCode === null;
-        const uptime = isRunning ? Math.floor((Date.now() - proc._startedAt) / 1000) : 0;
-        let status = 'stopped';
-        if (isRunning) status = 'running';
-        else if (b.status === 'installing') status = 'installing';
-        return {
-            name: b.name, owner: b.owner, ownerName: ownerNames[b.owner] || b.owner,
-            status,
-            language: b.language || 'Node.js',
-            ram: b.ram || 0, cpu: b.cpu || 0, uptime,
-            auto_start: b.auto_start || false,
-            createdAt: b.createdAt
-        };
-    });
-}
-
-app.get('/api/bots', auth, async (req, res) => {
-    const all = await getBotList();
-    const admin = await isAdmin(req.session);
-    if (isOwner(req.session) || admin) return res.json(all);
-    res.json(all.filter(b => b.owner === req.session.id));
-});
-
-app.get('/api/bots/info', auth, async (req, res) => {
-    const botsList = await getBotList();
-    res.json(botsList.filter(b => b.owner === req.session.id));
-});
-
-app.get('/api/bots/stats', auth, async (req, res) => {
-    const stats = {};
-    const admin = await isAdmin(req.session);
-    const allowed = isOwner(req.session) || admin ? null : req.session.id;
-    for (const [name, proc] of Object.entries(bots)) {
-        if (proc.exitCode !== null) continue;
-        if (allowed) {
-            const b = (await db.getBots()).find(x => x.name === name);
-            if (!b || b.owner !== allowed) continue;
-        }
-        stats[name] = { ram: 0, cpu: 0, uptime: proc._startedAt ? Math.floor((Date.now() - proc._startedAt) / 1000) : 0 };
-        try {
-            const used = process.memoryUsage();
-            stats[name].ram = Math.round(used.rss / 1024 / 1024);
-        } catch(e) {}
-    }
-    res.json(stats);
-});
-
-function dirSizeBytes(dir) {
-    let total = 0;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const p = path.join(dir, entry.name);
-        try {
-            if (entry.isDirectory()) total += dirSizeBytes(p);
-            else total += fs.statSync(p).size;
-        } catch(e) {}
-    }
-    return total;
-}
-
-function findNodeModulesDirs(dir) {
-    const out = [];
-    try {
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            const p = path.join(dir, entry.name);
-            if (entry.name === 'node_modules' && entry.isDirectory()) out.push(p);
-            else if (entry.isDirectory() && entry.name !== '.git') out.push(...findNodeModulesDirs(p));
-        }
-    } catch(e) {}
-    return out;
-}
-
-app.get('/api/admin/disk', auth, async (req, res) => {
-    const s = req.session;
-    if (!(await isAdmin(s))) return res.status(403).json({ error: 'Sem permissao' });
-    const persistRoot = path.dirname(BOTS_DIR);
-    const dataDir = path.join(persistRoot, 'data');
-    const out = { persist: persistRoot, bots: [], data: [], uploads: [], topLevel: [], disk: {} };
-    try {
-        if (fs.statfs) {
-            for (const [label, p] of [['root', '/app'], ['volume', persistRoot]]) {
-                const st = fs.statfsSync(p);
-                out.disk[label] = { freeMB: +((st.bavail * st.bsize) / 1048576).toFixed(1), totalMB: +((st.blocks * st.bsize) / 1048576).toFixed(1) };
-            }
-        }
-    } catch(e) { out.disk.error = e.message; }
-    if (fs.existsSync(persistRoot)) {
-        for (const name of fs.readdirSync(persistRoot)) {
-            const p = path.join(persistRoot, name);
-            try { if (fs.statSync(p).isDirectory()) out.topLevel.push({ name, sizeMB: +(dirSizeBytes(p) / 1048576).toFixed(2) }); } catch(e) {}
-        }
-        out.topLevel.sort((a, b) => b.sizeMB - a.sizeMB);
-    }
-    if (fs.existsSync(BOTS_DIR)) {
-        for (const name of fs.readdirSync(BOTS_DIR)) {
-            const p = path.join(BOTS_DIR, name);
-            try { if (fs.statSync(p).isDirectory()) out.bots.push({ name, sizeMB: +(dirSizeBytes(p) / 1048576).toFixed(2) }); } catch(e) {}
-        }
-    }
-    if (fs.existsSync(dataDir)) {
-        for (const f of fs.readdirSync(dataDir)) {
-            const p = path.join(dataDir, f);
-            try { if (fs.statSync(p).isFile()) out.data.push({ name: f, sizeMB: +(fs.statSync(p).size / 1048576).toFixed(2) }); } catch(e) {}
-        }
-    }
-    if (fs.existsSync(UPLOADS_DIR)) {
-        for (const f of fs.readdirSync(UPLOADS_DIR)) {
-            const p = path.join(UPLOADS_DIR, f);
-            try { if (fs.statSync(p).isFile()) out.uploads.push({ name: f, sizeMB: +(fs.statSync(p).size / 1048576).toFixed(2) }); } catch(e) {}
-        }
-    }
-    out.bots.sort((a, b) => b.sizeMB - a.sizeMB);
-    out.data.sort((a, b) => b.sizeMB - a.sizeMB);
-    out.uploads = out.uploads.filter(u => u.sizeMB > 0).sort((a, b) => b.sizeMB - a.sizeMB);
-    res.json(out);
-});
-
-app.post('/api/admin/cleanup', auth, async (req, res) => {
-    const s = req.session;
-    if (!(await isAdmin(s))) return res.status(403).json({ error: 'Sem permissao' });
-    const removed = [];
-    let freedMB = 0;
-    if (fs.existsSync(UPLOADS_DIR)) {
-        for (const f of fs.readdirSync(UPLOADS_DIR)) {
-            const p = path.join(UPLOADS_DIR, f);
-            try {
-                if (fs.statSync(p).isFile()) {
-                    freedMB += fs.statSync(p).size / 1048576;
-                    fs.unlinkSync(p);
-                    removed.push(f);
-                }
-            } catch(e) {}
-        }
-    }
-    const pruned = [];
-    let prunedMB = 0;
-    if (fs.existsSync(BOTS_DIR)) {
-        for (const name of fs.readdirSync(BOTS_DIR)) {
-            if (bots[name] || installingBots.has(name)) continue;
-            const botDir = path.join(BOTS_DIR, name);
-            for (const nmDir of findNodeModulesDirs(botDir)) {
-                try {
-                    prunedMB += dirSizeBytes(nmDir) / 1048576;
-                    fs.rmSync(nmDir, { recursive: true, force: true });
-                    pruned.push(name);
-                } catch(e) {}
-            }
-        }
-    }
-    const msg = 'Limpou ' + removed.length + ' uploads temporarios (' + freedMB.toFixed(1) + 'MB)';
-    const msg2 = pruned.length ? ' e removeu node_modules de ' + pruned.join(', ') + ' (' + prunedMB.toFixed(1) + 'MB)' : '';
-    logActivity('cleanup', msg + msg2, s);
-    res.json({ success: true, removed: removed.length, freedMB: +(freedMB + prunedMB).toFixed(2), pruned });
-});
-
-function cleanupStaleUploads() {
-    try {
-        if (!fs.existsSync(UPLOADS_DIR)) return;
-        const now = Date.now();
-        let freedMB = 0, removed = 0;
-        for (const f of fs.readdirSync(UPLOADS_DIR)) {
-            const p = path.join(UPLOADS_DIR, f);
-            try {
-                const st = fs.statSync(p);
-                if (st.isFile() && now - st.mtimeMs > 60 * 60 * 1000) {
-                    freedMB += st.size / 1048576;
-                    fs.unlinkSync(p);
-                    removed++;
-                }
-            } catch(e) {}
-        }
-        if (removed > 0) logActivity('cleanup', 'Auto-cleanup: removeu ' + removed + ' uploads antigos (' + freedMB.toFixed(1) + 'MB)', { id: 'system', username: 'Sistema' });
-    } catch(e) {}
-}
-
-function checkDiskSpace(req, res, next) {
-    try {
-        if (fs.statfs) {
-            const st = fs.statfsSync(UPLOADS_DIR);
-            const freeMB = (st.bavail * st.bsize) / 1048576;
-            if (freeMB < 25) return res.status(507).json({ error: 'Espaco em disco insuficiente no servidor' });
-        }
-    } catch(e) {}
-    next();
-}
-
-app.post('/api/bots', auth, uploadLimiter, checkDiskSpace, upload.single('file'), async (req, res) => {
-    const session = req.session;
-    const { name } = req.body;
-    if (!name || typeof name !== 'string' || !name.match(/^[a-zA-Z0-9_\-]{2,50}$/)) { try { if (req.file) fs.unlinkSync(req.file.path); } catch(e2) {} return res.status(400).json({ error: 'Nome invalido' }); }
-    if (!req.file) return res.status(400).json({ error: 'Arquivo .ZIP necessario' });
-    const botDir = getBotPath(name);
-    if (fs.existsSync(botDir)) { try { fs.unlinkSync(req.file.path); } catch(e2) {} return res.status(409).json({ error: 'Bot ja existe' }); }
-    try {
-        const zipPath = req.file.path;
-        const destDir = botDir;
-        if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
-        const unzipped = await runCmdAsync('unzip', ['-o', zipPath, '-d', destDir]);
-        if (!unzipped) {
-            const fallback = new AdmZip(zipPath);
-            fallback.extractAllTo(destDir, true);
-        }
-        try { fs.unlinkSync(zipPath); } catch(e2) {}
-        try {
-            const items = fs.readdirSync(botDir);
-            if (items.length === 1) {
-                const only = path.join(botDir, items[0]);
-                if (fs.statSync(only).isDirectory() && items[0] !== 'node_modules') {
-                    for (const f of fs.readdirSync(only)) {
-                        fs.renameSync(path.join(only, f), path.join(botDir, f));
+            fs.rmSync(subDir, { recursive: true, force: true });
+            addLog(name, 'Arquivos movidos para raiz!');
+        } else if (subDirs.length > 0) {
+            for (const sub of subDirs) {
+                const subDirPath = path.join(botDir, sub.name);
+                if (fs.existsSync(path.join(subDirPath, 'package.json')) || fs.existsSync(path.join(subDirPath, 'index.js'))) {
+                    addLog(name, `Encontrei projeto em subpasta "${sub.name}", movendo...`);
+                    const subEntries = fs.readdirSync(subDirPath, { withFileTypes: true });
+                    for (const se of subEntries) {
+                        const src = path.join(subDirPath, se.name);
+                        const dst = path.join(botDir, se.name);
+                        if (fs.existsSync(dst)) continue;
+                        fs.renameSync(src, dst);
                     }
-                    try { fs.rmdirSync(only); } catch(e) {}
+                    fs.rmSync(subDirPath, { recursive: true, force: true });
+                    addLog(name, 'Arquivos movidos para raiz!');
+                    break;
                 }
-            }
-        } catch(e) {}
-        const pkgPath = path.join(botDir, 'package.json');
-        const detected = findMainFile(botDir);
-        let lang = detected && detected.runtime === 'python' ? 'Python' : 'Node.js';
-        await db.saveBot(name, { owner: session.id, language: lang, status: 'installing', createdAt: new Date().toISOString() });
-        res.json({ success: true });
-        logActivity('bot_create', 'Criou bot ' + name, session);
-        if (fs.existsSync(pkgPath) && lang !== 'Python') {
-            try {
-                const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-                const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-                if (deps['discord.js'] && deps['discord.js'].startsWith('^14')) lang = 'Node.js';
-                await db.saveBot(name, { owner: session.id, language: lang, status: 'installing', createdAt: new Date().toISOString() });
-                runCmdAsync('npm', ['install', '--prefer-offline'], { cwd: botDir }).then(() => db.saveBot(name, { owner: session.id, language: lang, status: 'stopped', createdAt: new Date().toISOString() }));
-            } catch(e) {
-                await db.saveBot(name, { owner: session.id, language: lang, status: 'stopped', createdAt: new Date().toISOString() });
             }
         } else {
-            await db.saveBot(name, { owner: session.id, language: lang, status: 'stopped', createdAt: new Date().toISOString() });
+            break;
         }
-    } catch (e) {
-        try { fs.unlinkSync(req.file.path); } catch(e2) {}
-        try { fs.rmSync(botDir, { recursive: true, force: true }); } catch(e2) {}
-        if (!res.headersSent) res.status(500).json({ error: 'Erro ao processar ZIP: ' + e.message });
     }
-});
-
-app.post('/api/bots/:name/start', auth, async (req, res) => {
-    const name = req.params.name;
-    const b = (await db.getBots()).find(x => x.name === name);
-    const session = req.session;
-    if (!b) return res.status(404).json({ error: 'Bot nao encontrado' });
-    const admin = await isAdmin(session);
-    if (!admin && b.owner !== session.id) return res.status(403).json({ error: 'Sem permissao' });
-    const botDir = getBotPath(name);
-    if (!fs.existsSync(botDir)) return res.status(404).json({ error: 'Diretorio do bot nao encontrado' });
-    const result = await startBotProcess(name);
-    if (result.error) return res.status(500).json({ error: result.error });
-    logActivity('bot_start', 'Ligou bot ' + name, session);
-    res.json({ success: true });
-});
-
-app.post('/api/bots/:name/stop', auth, async (req, res) => {
-    const name = req.params.name;
-    const b = (await db.getBots()).find(x => x.name === name);
-    const session = req.session;
-    if (!b) return res.status(404).json({ error: 'Bot nao encontrado' });
-    const admin = await isAdmin(session);
-    if (!admin && b.owner !== session.id) return res.status(403).json({ error: 'Sem permissao' });
-    stopBotProcess(name);
-    logActivity('bot_stop', 'Desligou bot ' + name, session);
-    res.json({ success: true });
-});
-
-app.post('/api/bots/:name/restart', auth, async (req, res) => {
-    const name = req.params.name;
-    const b = (await db.getBots()).find(x => x.name === name);
-    const session = req.session;
-    if (!b) return res.status(404).json({ error: 'Bot nao encontrado' });
-    const admin = await isAdmin(session);
-    if (!admin && b.owner !== session.id) return res.status(403).json({ error: 'Sem permissao' });
-    stopBotProcess(name);
-    await new Promise(r => setTimeout(r, 1000));
-    const result = startBotProcess(name);
-    if (result.error) return res.status(500).json({ error: result.error });
-    logActivity('bot_restart', 'Reiniciou bot ' + name, session);
-    res.json({ success: true });
-});
-
-app.delete('/api/bots/:name', auth, async (req, res) => {
-    const name = req.params.name;
-    const b = (await db.getBots()).find(x => x.name === name);
-    const session = req.session;
-    if (!b) return res.status(404).json({ error: 'Bot nao encontrado' });
-    const admin = await isAdmin(session);
-    if (!admin && b.owner !== session.id) return res.status(403).json({ error: 'Sem permissao' });
-    stopBotProcess(name);
-    const botDir = getBotPath(name);
-    try { fs.rmSync(botDir, { recursive: true, force: true }); } catch(e) {}
-    await db.deleteBotDB(name);
-    logActivity('bot_delete', 'Deletou bot ' + name, session);
-    res.json({ success: true });
-});
-
-app.get('/api/bots/:name/logs', auth, async (req, res) => {
-    const name = req.params.name;
-    const b = (await db.getBots()).find(x => x.name === name);
-    const session = req.session;
-    if (!b) return res.status(404).json({ error: 'Bot nao encontrado' });
-    const admin = await isAdmin(session);
-    if (!admin && b.owner !== session.id) return res.status(403).json({ error: 'Sem permissao' });
-    const proc = bots[name];
-    const logs = proc ? (proc._logs || []).slice(-200) : (lastLogs[name] || []).slice(-200);
-    res.json({ logs });
-});
-
-// === FILE MANAGER ===
-function safeBotPath(botName, relPath) {
-    const base = path.resolve(getBotPath(botName));
-    const target = path.resolve(base, relPath || '.');
-    if (target !== base && !target.startsWith(base + path.sep)) return null;
-    return target;
-}
-async function canManageBot(botName, session) {
-    const b = (await db.getBots()).find(x => x.name === botName);
-    if (!b) return null;
-    const admin = await isAdmin(session);
-    if (!admin && b.owner !== session.id) return null;
-    return b;
 }
 
-app.get('/api/bots/:name/files', auth, async (req, res) => {
-    const name = req.params.name;
-    const b = await canManageBot(name, req.session);
-    if (!b) return res.status(403).json({ error: 'Sem permissao' });
-    const dir = safeBotPath(name, req.query.path || '.');
-    if (!dir) return res.status(400).json({ error: 'Caminho invalido' });
-    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return res.status(404).json({ error: 'Pasta nao encontrada' });
-    const items = fs.readdirSync(dir, { withFileTypes: true }).map(f => {
-        const fp = path.join(dir, f.name);
-        let size = 0, mtime = null;
-        try { const st = fs.statSync(fp); size = f.isDirectory() ? 0 : st.size; mtime = st.mtime; } catch(e) {}
-        return { name: f.name, isDir: f.isDirectory(), size, mtime };
-    }).sort((a, b) => (a.isDir === b.isDir) ? a.name.localeCompare(b.name) : (a.isDir ? -1 : 1));
-    res.json({ path: req.query.path || '.', items });
-});
-
-app.get('/api/bots/:name/files/content', auth, async (req, res) => {
-    const name = req.params.name;
-    const b = await canManageBot(name, req.session);
-    if (!b) return res.status(403).json({ error: 'Sem permissao' });
-    const fp = safeBotPath(name, req.query.path || '');
-    if (!fp) return res.status(400).json({ error: 'Caminho invalido' });
-    if (!fs.existsSync(fp) || !fs.statSync(fp).isFile()) return res.status(404).json({ error: 'Arquivo nao encontrado' });
-    const size = fs.statSync(fp).size;
-    if (size > 2 * 1024 * 1024) return res.status(400).json({ error: 'Arquivo muito grande para editar (max 2MB)' });
-    const ext = path.extname(fp).toLowerCase();
-    const binaryExts = ['.png','.jpg','.jpeg','.gif','.webp','.ico','.zip','.rar','.7z','.exe','.bin','.mp3','.mp4','.ogg','.wav','.woff','.woff2','.ttf','.eot','.sqlite','.db','.jar','.node'];
-    if (binaryExts.includes(ext)) return res.status(400).json({ error: 'Arquivo binario, nao pode ser editado aqui' });
-    try {
-        let content = fs.readFileSync(fp, 'utf8');
-        if (content.length > 2 * 1024 * 1024) return res.status(400).json({ error: 'Arquivo muito grande para editar' });
-        res.json({ content, path: req.query.path || '' });
-    } catch(e) { res.status(500).json({ error: 'Erro ao ler arquivo' }); }
-});
-
-app.post('/api/bots/:name/files/write', auth, async (req, res) => {
-    const name = req.params.name;
-    const b = await canManageBot(name, req.session);
-    if (!b) return res.status(403).json({ error: 'Sem permissao' });
-    const { path: relPath, content } = req.body;
-    if (typeof relPath !== 'string' || relPath.includes('..')) return res.status(400).json({ error: 'Caminho invalido' });
-    const fp = safeBotPath(name, relPath);
-    if (!fp) return res.status(400).json({ error: 'Caminho invalido' });
-    if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Arquivo nao encontrado' });
-    if (!fs.statSync(fp).isFile()) return res.status(400).json({ error: 'Nao e um arquivo' });
-    if (typeof content !== 'string' || content.length > 2 * 1024 * 1024) return res.status(400).json({ error: 'Conteudo invalido' });
-    fs.writeFileSync(fp, content, 'utf8');
-    logActivity('file_edit', 'Editou ' + relPath + ' em ' + name, req.session);
-    res.json({ success: true });
-});
-
-app.post('/api/bots/:name/files/create', auth, async (req, res) => {
-    const name = req.params.name;
-    const b = await canManageBot(name, req.session);
-    if (!b) return res.status(403).json({ error: 'Sem permissao' });
-    const { path: relPath, type, content } = req.body;
-    if (typeof relPath !== 'string' || relPath.includes('..') || !relPath.trim()) return res.status(400).json({ error: 'Caminho invalido' });
-    const fp = safeBotPath(name, relPath);
-    if (!fp) return res.status(400).json({ error: 'Caminho invalido' });
-    if (fs.existsSync(fp)) return res.status(409).json({ error: 'Ja existe' });
-    if (type === 'folder') {
-        fs.mkdirSync(fp, { recursive: true });
-    } else {
-        const parent = path.dirname(fp);
-        if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });
-        fs.writeFileSync(fp, typeof content === 'string' ? content : '', 'utf8');
+function startBot(name) {
+    const botDir = getBotDir(name);
+    if (!fs.existsSync(botDir)) {
+        if (bots[name]) {
+            bots[name].status = 'error';
+            addLog(name, 'ERRO: Arquivos do bot nao encontrados no servidor. O Railway reiniciou e apagou os arquivos. Re-envie o ZIP do bot para restaurar.');
+        }
+        return false;
     }
-    logActivity('file_create', 'Criou ' + relPath + ' em ' + name, req.session);
-    res.json({ success: true });
-});
+    if (bots[name] && bots[name].process) return true;
 
-app.post('/api/bots/:name/files/rename', auth, async (req, res) => {
-    const name = req.params.name;
-    const b = await canManageBot(name, req.session);
-    if (!b) return res.status(403).json({ error: 'Sem permissao' });
-    const { path: oldPath, newPath } = req.body;
-    if (typeof oldPath !== 'string' || typeof newPath !== 'string' || oldPath.includes('..') || newPath.includes('..')) return res.status(400).json({ error: 'Caminho invalido' });
-    const from = safeBotPath(name, oldPath);
-    const to = safeBotPath(name, newPath);
-    if (!from || !to) return res.status(400).json({ error: 'Caminho invalido' });
-    if (!fs.existsSync(from)) return res.status(404).json({ error: 'Nao encontrado' });
-    if (fs.existsSync(to)) return res.status(409).json({ error: 'Destino ja existe' });
-    const base = path.resolve(getBotPath(name));
-    if (path.dirname(from) === base || path.dirname(to) === base) return res.status(403).json({ error: 'Nao pode mover arquivos na raiz do bot' });
-    fs.renameSync(from, to);
-    logActivity('file_rename', 'Renomeou ' + oldPath + ' em ' + name, req.session);
-    res.json({ success: true });
-});
+    flattenBotDir(botDir, name);
 
-app.delete('/api/bots/:name/files', auth, async (req, res) => {
-    const name = req.params.name;
-    const b = await canManageBot(name, req.session);
-    if (!b) return res.status(403).json({ error: 'Sem permissao' });
-    const relPath = req.query.path || '';
-    if (typeof relPath !== 'string' || relPath.includes('..') || !relPath.trim()) return res.status(400).json({ error: 'Caminho invalido' });
-    const fp = safeBotPath(name, relPath);
-    if (!fp) return res.status(400).json({ error: 'Caminho invalido' });
-    if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Nao encontrado' });
-    const base = path.resolve(getBotPath(name));
-    if (path.dirname(fp) === base) return res.status(403).json({ error: 'Nao pode deletar arquivos na raiz do bot' });
-    try { fs.rmSync(fp, { recursive: true, force: true }); } catch(e) { return res.status(500).json({ error: 'Erro ao deletar' }); }
-    logActivity('file_delete', 'Deletou ' + relPath + ' em ' + name, req.session);
-    res.json({ success: true });
-});
-
-// === LIGAR ALL (admin/owner) ===
-app.post('/api/bots/start-all', adminOnly, async (req, res) => {
-    const allBots = await db.getBots();
-    const results = { success: [], failed: [] };
-    for (const b of allBots) {
-        const botDir = getBotPath(b.name);
-        if (!fs.existsSync(botDir)) { results.failed.push({ name: b.name, error: 'Diretorio nao encontrado' }); continue; }
-        if (bots[b.name] && bots[b.name].exitCode === null) { results.success.push(b.name); continue; }
-        const result = await startBotProcess(b.name);
-        if (result.success) { results.success.push(b.name); } else { results.failed.push({ name: b.name, error: result.error }); }
+    const packageJson = path.join(botDir, 'package.json');
+    let mainFile = 'index.js';
+    if (fs.existsSync(packageJson)) {
+        try {
+            const pkg = JSON.parse(fs.readFileSync(packageJson, 'utf8'));
+            if (pkg.main) mainFile = pkg.main;
+        } catch (e) {}
     }
-    logActivity('bot_start_all', 'Ligou todos os bots (' + results.success.length + ' ok, ' + results.failed.length + ' falha)', req.session);
-    res.json({ success: true, results });
-});
 
-// === PURCHASES ===
-async function discordFetch(path, opts = {}) {
-    if (!DISCORD_BOT_TOKEN) return null;
-    const res = await fetch(DISCORD_API + path, {
-        ...opts,
-        headers: { Authorization: 'Bot ' + DISCORD_BOT_TOKEN, 'Content-Type': 'application/json', ...(opts.headers || {}) }
+    const entryFile = path.join(botDir, mainFile);
+
+    if (!fs.existsSync(entryFile)) {
+        addLog(name, `Arquivo ${mainFile} nao encontrado! Verifique o ZIP.`);
+        bots[name].status = 'error';
+        return false;
+    }
+
+    const nmDir = path.join(botDir, 'node_modules');
+    const lockFile = path.join(botDir, 'package-lock.json');
+
+    if (fs.existsSync(packageJson)) {
+        bots[name].status = 'installing';
+        if (fs.existsSync(nmDir)) {
+            addLog(name, 'Limpando node_modules antigo...');
+            fs.rmSync(nmDir, { recursive: true, force: true });
+        }
+        if (fs.existsSync(lockFile)) {
+            addLog(name, 'Removendo package-lock.json antigo...');
+            fs.rmSync(lockFile, { force: true });
+        }
+
+        // Verificar espaco antes de instalar
+        const diskBefore = checkDiskSpace();
+        if (!diskBefore.ok) {
+            addLog(name, `ERRO: Espaco em disco insuficiente (${diskBefore.usedMB}MB/${diskBefore.limitMB}MB usado). Delete bots antigos para liberar espaco.`);
+            bots[name].status = 'error';
+            return false;
+        }
+
+        addLog(name, `Instalando dependencias (espaco livre: ${diskBefore.limitMB - diskBefore.usedMB}MB)...`);
+
+        // --omit=dev: instala so dependencias de producao
+        // --no-audit --no-fund: mais rapido, sem requests extras
+        // --prefer-offline: usa cache se disponivel
+        const npmEnv = { ...process.env, NPM_CONFIG_CACHE: path.join(os.tmpdir(), 'npm-cache') };
+        const install = spawn('npm', ['install', '--omit=dev', '--no-audit', '--no-fund', '--prefer-offline'], {
+            cwd: botDir,
+            shell: true,
+            env: npmEnv
+        });
+        install.stdout.on('data', (d) => d.toString().split('\n').filter(Boolean).forEach(l => addLog(name, l)));
+        install.stderr.on('data', (d) => d.toString().split('\n').filter(Boolean).forEach(l => addLog(name, l)));
+        install.on('close', (code) => {
+            if (code !== 0) {
+                addLog(name, `ERRO: npm install falhou (codigo ${code})`);
+                bots[name].status = 'error';
+                return;
+            }
+
+            // Limpar cache do npm para economizar espaco
+            try {
+                const cacheDir = path.join(os.tmpdir(), 'npm-cache');
+                if (fs.existsSync(cacheDir)) {
+                    fs.rmSync(cacheDir, { recursive: true, force: true });
+                }
+            } catch {}
+
+            // Verificar espaco apos instalacao
+            const diskAfter = checkDiskSpace();
+            addLog(name, `Dependencias instaladas! Disco usado: ${diskAfter.usedMB}MB/${diskAfter.limitMB}MB`);
+
+            if (!diskAfter.ok) {
+                addLog(name, 'AVISO: Disco proximo do limite! Considere deletar bots antigos.');
+            }
+
+            launchBot(name, botDir, entryFile);
+        });
+        install.on('error', (err) => {
+            addLog(name, `ERRO ao rodar npm install: ${err.message}`);
+            bots[name].status = 'error';
+        });
+        return true;
+    }
+
+    addLog(name, 'package.json nao encontrado, tentando iniciar direto...');
+    launchBot(name, botDir, entryFile);
+    return true;
+}
+
+function launchBot(name, botDir, entryFile) {
+    if (!fs.existsSync(entryFile)) {
+        addLog(name, `Arquivo ${path.basename(entryFile)} nao encontrado!`);
+        bots[name].status = 'error';
+        return;
+    }
+
+    const child = spawn('node', [entryFile], {
+        cwd: botDir,
+        env: { ...process.env },
+        stdio: ['pipe', 'pipe', 'pipe']
     });
-    if (!res.ok) { const body = await res.text().catch(() => ''); console.error('Discord API ' + path + ' -> ' + res.status + ': ' + body.slice(0, 200)); return null; }
-    return res.json();
+
+    bots[name].process = child;
+    bots[name].status = 'running';
+    addLog(name, 'Bot iniciado!');
+
+    child.stdout.on('data', (data) => {
+        data.toString().split('\n').filter(Boolean).forEach(line => addLog(name, line));
+    });
+    child.stderr.on('data', (data) => {
+        data.toString().split('\n').filter(Boolean).forEach(line => addLog(name, `[ERRO] ${line}`));
+    });
+    child.on('close', (code) => {
+        addLog(name, `Bot parou (codigo: ${code})`);
+        bots[name].process = null;
+        bots[name].status = 'stopped';
+    });
+    child.on('error', (err) => {
+        addLog(name, `Erro ao iniciar: ${err.message}`);
+        bots[name].process = null;
+        bots[name].status = 'error';
+    });
+
+    return true;
 }
 
-async function createDiscordTicket({ id, session, planName, planPrice, planDuration, paymentMethod }) {
-    if (!DISCORD_BOT_TOKEN || !DISCORD_TICKET_CATEGORY_ID) return null;
+function stopBot(name) {
+    if (!bots[name] || !bots[name].process) return false;
     try {
-        const category = await discordFetch('/channels/' + DISCORD_TICKET_CATEGORY_ID);
-        if (!category || !category.guild_id) return null;
-        const guildId = category.guild_id;
-        const isDiscordUser = session && session.type === 'discord' && /^\d+$/.test(String(session.id || ''));
-        const name = ('ticket-' + (session && session.username ? session.username : 'compra'))
-            .toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '').slice(0, 90) || 'ticket-compra';
-        const overwrites = [
-            { id: guildId, type: 0, deny: String(1024) },
-            ...(isDiscordUser ? [{ id: String(session.id), type: 1, allow: String(1024 + 2048 + 65536) }] : [])
-        ];
-        const channel = await discordFetch('/guilds/' + guildId + '/channels', {
-            method: 'POST',
-            body: JSON.stringify({ name, type: 0, parent_id: DISCORD_TICKET_CATEGORY_ID, permission_overwrites: overwrites })
-        });
-        if (!channel || !channel.id) return null;
-        await discordFetch('/channels/' + channel.id + '/messages', {
-            method: 'POST',
-            body: JSON.stringify({
-                content: isDiscordUser ? '<@' + session.id + '>' : '',
-                embeds: [{
-                    title: 'Ticket de Compra #' + id,
-                    color: 0x22c55e,
-                    fields: [
-                        { name: 'Usuario', value: session.username + (isDiscordUser ? ' (' + session.id + ')' : ''), inline: true },
-                        { name: 'Plano', value: planName || '?', inline: true },
-                        { name: 'Valor', value: planPrice || '?', inline: true },
-                        { name: 'Duracao', value: planDuration || '?', inline: true },
-                        { name: 'Pagamento', value: paymentMethod || 'Manual', inline: true },
-                        { name: 'Status', value: 'Pendente de aprovacao', inline: false }
-                    ],
-                    timestamp: new Date().toISOString()
-                }]
-            })
-        });
-        return { channelId: channel.id, guildId };
-    } catch (e) { console.error('Erro criar ticket Discord:', e.message); return null; }
-}
-
-async function grantDiscordRole(userId, roleId) {
-    if (!DISCORD_BOT_TOKEN || !roleId || !userId) return { ok: false, reason: 'sem-config' };
-    if (!/^\d+$/.test(String(userId)) || !/^\d+$/.test(String(roleId))) return { ok: false, reason: 'id-invalido' };
-    try {
-        const guilds = await discordFetch('/users/@me/guilds');
-        if (!guilds || !guilds.length) return { ok: false, reason: 'sem-servidor' };
-        for (const g of guilds) {
-            const res = await fetch(DISCORD_API + '/guilds/' + g.id + '/members/' + userId + '/roles/' + roleId, {
-                method: 'PUT',
-                headers: { Authorization: 'Bot ' + DISCORD_BOT_TOKEN, 'Content-Type': 'application/json' }
-            });
-            if (res.ok) { console.log('Cargo ' + roleId + ' concedido para ' + userId + ' em ' + g.id); return { ok: true, guildId: g.id }; }
-            const status = res.status;
-            if (status !== 404) { const body = await res.text().catch(() => ''); console.error('Grant role ' + roleId + ' -> ' + status + ': ' + body.slice(0, 200)); }
-        }
-        return { ok: false, reason: 'nao-encontrado' };
-    } catch (e) { console.error('grantDiscordRole error:', e.message); return { ok: false, reason: 'erro' }; }
-}
-
-app.get('/api/purchases', adminOnly, async (req, res) => {
-    res.json(await db.getPurchases());
-});
-app.get('/api/plans', auth, async (req, res) => {
-    res.json(await db.getPlans());
-});
-app.post('/api/plans', adminOnly, async (req, res) => {
-    const { name, price, duration, tier, features, botsMax, roleId } = req.body;
-    if (!name) return res.status(400).json({ error: 'Nome do plano obrigatorio' });
-    const plan = await db.savePlan({ name, price, duration, tier, features, botsMax, roleId, createdAt: new Date().toISOString() });
-    logActivity('plan', 'Criou plano ' + name, getSessionSync(req));
-    res.json({ success: true, plan });
-});
-app.delete('/api/plans/:id', adminOnly, async (req, res) => {
-    await db.deletePlan(req.params.id);
-    logActivity('plan', 'Removeu plano #' + req.params.id, getSessionSync(req));
-    res.json({ success: true });
-});
-app.get('/api/user/purchases', auth, async (req, res) => {
-    res.json(await db.getUserPurchases(req.session.id));
-});
-app.post('/api/purchase', auth, async (req, res) => {
-    const session = req.session;
-    const { planName, planPrice, planTier, planDuration, paymentMethod, planRoleId } = req.body;
-    if (!planName) return res.status(400).json({ error: 'Dados incompletos' });
-    const id = await db.createPurchase({ userId: session.id, username: session.username, planName, planPrice, planTier, planDuration, paymentMethod: paymentMethod || 'manual', roleId: planRoleId });
-    let ticket = null;
-    try {
-        ticket = await createDiscordTicket({ id, session, planName, planPrice, planDuration, paymentMethod });
-        if (ticket) await db.saveTicketInfo(id, { channelId: ticket.channelId, guildId: ticket.guildId });
-    } catch(e) { console.error('Erro ao criar ticket:', e.message); }
-    try {
-        const WEBHOOK = process.env.DISCORD_TICKET_WEBHOOK;
-        if (WEBHOOK) {
-            const embed = {
-                embeds: [{
-                    title: 'Nova Compra #' + id,
-                    color: 0x22c55e,
-                    fields: [
-                        { name: 'Usuario', value: session.username + ' (' + session.id + ')', inline: true },
-                        { name: 'Plano', value: planName, inline: true },
-                        { name: 'Valor', value: planPrice || '?', inline: true },
-                        { name: 'Duracao', value: planDuration || '?', inline: true },
-                        { name: 'Pagamento', value: paymentMethod || 'Manual', inline: true },
-                        { name: 'Status', value: 'Pendente', inline: true }
-                    ],
-                    timestamp: new Date().toISOString()
-                }],
-                content: '@everyone'
-            };
-            await fetch(WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(embed) });
-        }
-    } catch(e) { console.error('Erro webhook compra:', e.message); }
-    logActivity('purchase', 'Compra #' + id + ' - ' + planName + ' (' + (planPrice || '?') + ')', session);
-    res.json({ success: true, id, ticketChannelId: ticket ? ticket.channelId : null, ticketGuildId: ticket ? ticket.guildId : null });
-});
-app.post('/api/purchases/:id/approve', adminOnly, async (req, res) => {
-    const id = parseInt(req.params.id);
-    await db.updatePurchaseStatus(id, 'approved');
-    const p = await db.getPurchase(id);
-    let grantedRole = null;
-    if (p && p.role_id && /^\d+$/.test(String(p.user_id))) {
-        grantedRole = await grantDiscordRole(p.user_id, p.role_id);
-        if (grantedRole && grantedRole.ok) logActivity('purchase_role', 'Cargo concedido na compra #' + id, getSessionSync(req));
+        bots[name].process.kill('SIGTERM');
+        addLog(name, 'Bot desligado.');
+        bots[name].status = 'stopped';
+        bots[name].process = null;
+        return true;
+    } catch (e) {
+        addLog(name, `Erro ao desligar: ${e.message}`);
+        return false;
     }
-    if (p && p.ticket_channel_id && DISCORD_BOT_TOKEN) {
-        try {
-            const roleNote = grantedRole && grantedRole.ok ? '\n\nBeneficios ativados no servidor!' : '';
-            await discordFetch('/channels/' + p.ticket_channel_id + '/messages', {
-                method: 'POST',
-                body: JSON.stringify({ embeds: [{ title: 'Compra #' + id + ' APROVADA', color: 0x22c55e, description: 'Pagamento confirmado! O plano **' + (p.plan_name || '') + '** ja esta ativo.' + roleNote, timestamp: new Date().toISOString() }] })
-            });
-        } catch(e) { console.error('Erro notificar aprovacao:', e.message); }
-    }
-    logActivity('purchase_approve', 'Aprovou compra #' + id, getSessionSync(req));
-    res.json({ success: true });
-});
-app.post('/api/purchases/:id/reject', adminOnly, async (req, res) => {
-    const id = parseInt(req.params.id);
-    await db.updatePurchaseStatus(id, 'rejected');
-    const p = await db.getPurchase(id);
-    if (p && p.ticket_channel_id && DISCORD_BOT_TOKEN) {
-        try {
-            await discordFetch('/channels/' + p.ticket_channel_id + '/messages', {
-                method: 'POST',
-                body: JSON.stringify({ embeds: [{ title: 'Compra #' + id + ' RECUSADA', color: 0xef4444, description: 'Seu pagamento nao foi confirmado. Se acha que houve erro, abra um novo ticket.', timestamp: new Date().toISOString() }] })
-            });
-        } catch(e) { console.error('Erro notificar rejeicao:', e.message); }
-    }
-    logActivity('purchase_reject', 'Rejeitou compra #' + id, getSessionSync(req));
-    res.json({ success: true });
-});
-
-// === DATABASES (in-container engines) ===
-const DB_ENGINE = { postgres: false, mysql: false, redis: false, mongodb: false };
-const dbEngineLog = {};
-const enginePromises = {};
-const dbCreateJobs = {};
-
-async function ensureEngineOnce(type) {
-    if (type === 'sqlite') return true;
-    if (DB_ENGINE[type]) return true;
-    if (enginePromises[type]) return enginePromises[type];
-    const p = (async () => {
-        let ok = false;
-        if (type === 'postgres') ok = await ensurePostgres();
-        else if (type === 'mysql' || type === 'mariadb') ok = await ensureMysql();
-        else if (type === 'redis') ok = await ensureRedis();
-        else if (type === 'mongodb') ok = await ensureMongo();
-        DB_ENGINE[type] = ok;
-        return ok;
-    })();
-    enginePromises[type] = p;
-    p.then(ok => { if (!ok) enginePromises[type] = null; }).catch(() => { enginePromises[type] = null; });
-    return p;
-}
-const DB_ALLOWED = ['postgres', 'mongodb', 'mysql', 'redis', 'mariadb', 'sqlite'];
-const DB_ENGINE_PORTS = { postgres: 5432, mysql: 3306, mariadb: 3306, redis: 6379, mongodb: 27017 };
-let redisNextPort = 6380;
-
-function pgBinDir() {
-    try {
-        const base = '/usr/lib/postgresql';
-        if (!fs.existsSync(base)) return null;
-        const dirs = fs.readdirSync(base);
-        if (!dirs.length) return null;
-        return path.join(base, dirs.sort().pop());
-    } catch (e) { return null; }
 }
 
-async function waitForPort(port, attempts, checkFn) {
-    for (let i = 0; i < attempts; i++) {
-        try { if (await checkFn(port)) return true; } catch (e) {}
-        await new Promise(r => setTimeout(r, 1000));
-    }
+function restartBot(name) {
+    stopBot(name);
+    setTimeout(() => startBot(name), 1000);
+    return true;
+}
+
+function deleteBot(name) {
+    stopBot(name);
+    const botDir = getBotDir(name);
+    if (fs.existsSync(botDir)) fs.rmSync(botDir, { recursive: true, force: true });
+    delete bots[name];
+}
+
+function canAccessBot(req, botName) {
+    const session = getSession(req);
+    if (!session) return false;
+    if (session.type === 'discord' && session.id === OWNER_ID) return true;
+    const meta = loadBotsMeta();
+    const owner = meta[botName] ? meta[botName].owner : null;
+    if (session.type === 'discord') return owner === session.id;
+    if (session.type === 'password') return owner === 'password-admin';
     return false;
 }
 
-async function ensurePostgres() {
-    const pgBin = pgBinDir();
-    if (!pgBin) { dbEngineLog.postgres = 'pasta de binarios postgres nao encontrada'; console.error('ensurePostgres:', dbEngineLog.postgres); return false; }
-    const pgCmd = pgBin + '/bin';
-    const data = path.join(PERSIST_ROOT, 'pgdata');
+function getSession(req) {
+    const cookie = req.headers.cookie || '';
+    const match = cookie.match(/session=([^;]+)/);
+    if (match && sessions[match[1]]) return sessions[match[1]];
+    return null;
+}
+
+function auth(req, res, next) {
+    if (getSession(req)) return next();
+    res.status(401).json({ error: 'Nao autorizado' });
+}
+
+loadBots();
+
+// === DISCORD OAUTH ===
+app.get('/auth/discord', (req, res) => {
+    const params = new URLSearchParams({
+        client_id: DISCORD_CLIENT_ID,
+        redirect_uri: DISCORD_REDIRECT_URI,
+        response_type: 'code',
+        scope: 'identify'
+    });
+    res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
+});
+
+app.get('/auth/discord/callback', async (req, res) => {
+    const { code } = req.query;
+    if (!code) return res.redirect('/');
+
     try {
-        if (!fs.existsSync(path.join(data, 'PG_VERSION'))) {
-            fs.mkdirSync(data, { recursive: true });
-            await runCmdAsync('chown', ['-R', 'postgres:postgres', data]);
-            const init = await runAs('postgres', [pgCmd + '/initdb', '-D', data, '-A', 'trust', '-U', 'postgres', '--no-locale', '--encoding=UTF8']);
-            if (!init.ok) { dbEngineLog.postgres = 'initdb: ' + init.out.slice(0, 800); console.error('ensurePostgres:', dbEngineLog.postgres); return false; }
-        }
-        if (!DB_ENGINE.postgres) {
-            const started = await runAs('postgres', [pgCmd + '/pg_ctl', '-D', data, '-l', data + '/server.log', '-o', '-p 5432 -c listen_addresses=127.0.0.1', '-w', 'start']);
-            if (!started.ok) dbEngineLog.postgres = 'pg_ctl: ' + started.out.slice(0, 800);
-        }
-        const check = await waitForPort(5432, 15, async () => {
-            const c = new (require('pg').Client)({ host: '127.0.0.1', port: 5432, user: 'postgres', database: 'postgres', connectionTimeoutMillis: 2000 });
-            await c.connect(); await c.end(); return true;
+        const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                client_id: DISCORD_CLIENT_ID,
+                client_secret: DISCORD_CLIENT_SECRET,
+                code,
+                grant_type: 'authorization_code',
+                redirect_uri: DISCORD_REDIRECT_URI,
+                scope: 'identify'
+            })
         });
-        if (!check) { dbEngineLog.postgres = (dbEngineLog.postgres || '') + ' | porta 5432 nao respondeu'; console.error('ensurePostgres:', dbEngineLog.postgres); return false; }
-        DB_ENGINE.postgres = true;
-        dbEngineLog.postgres = 'ok';
-        return true;
-    } catch (e) { dbEngineLog.postgres = 'erro: ' + e.message; console.error('ensurePostgres error:', e.message); return false; }
-}
+        const tokenData = await tokenRes.json();
 
-async function ensureMysql() {
-    const data = path.join(PERSIST_ROOT, 'mysqldata');
-    try {
-        if (!fs.existsSync(path.join(data, 'mysql'))) {
-            fs.mkdirSync(data, { recursive: true });
-            await runCmdAsync('chown', ['-R', 'mysql:mysql', data]);
-            const inst = await runCmdAsync('mariadb-install-db', ['--user=mysql', '--datadir=' + data, '--auth-root-authentication-method=normal']);
-            if (!inst) return false;
+        if (!tokenData.access_token) return res.redirect('/');
+
+        const userRes = await fetch('https://discord.com/api/users/@me', {
+            headers: { Authorization: `Bearer ${tokenData.access_token}` }
+        });
+        const user = await userRes.json();
+
+        if (isBanned(user.id)) {
+            return res.redirect('/?banned=1');
         }
-        if (!DB_ENGINE.mysql) {
-            const started = await runCmdAsync('mariadbd', ['--user=mysql', '--datadir=' + data, '--port=3306', '--bind-address=127.0.0.1', '--socket=' + data + '/mysqld.sock', '--pid-file=' + data + '/mysqld.pid', '--daemonize', '--log-error=' + data + '/mysqld.log', '--innodb-buffer-pool-size=64M']);
-            if (!started) console.error('ensureMysql: mariadbd --daemonize falhou');
-            const check = await waitForPort(3306, 15, async () => {
-                const m = require('mysql2/promise');
-                const conn = await m.createConnection({ host: '127.0.0.1', port: 3306, user: 'root', connectTimeout: 2000 });
-                await conn.query('SELECT 1'); await conn.end(); return true;
-            });
-            if (!check) return false;
-        }
-        DB_ENGINE.mysql = true;
-        return true;
-    } catch (e) { console.error('ensureMysql error:', e.message); return false; }
-}
 
-async function ensureRedis() {
-    const data = path.join(PERSIST_ROOT, 'redisdata');
-    try {
-        fs.mkdirSync(data, { recursive: true });
-        await runCmdAsync('chown', ['-R', 'redis:redis', data]);
-        if (!DB_ENGINE.redis) {
-            const started = await runAs('redis', ['redis-server', '--port', '6379', '--bind', '127.0.0.1', '--dir', data, '--dbfilename', 'dump.rdb', '--appendonly', 'yes', '--daemonize', 'yes', '--logfile', data + '/redis.log']);
-            if (!started.ok) console.error('ensureRedis start:', started.out);
-            const check = await waitForPort(6379, 10, async () => {
-                const out = require('child_process').execFileSync('redis-cli', ['-p', '6379', 'ping'], { stdio: 'pipe', timeout: 3000 });
-                return String(out).includes('PONG');
-            });
-            if (!check) return false;
-        }
-        DB_ENGINE.redis = true;
-        return true;
-    } catch (e) { console.error('ensureRedis error:', e.message); return false; }
-}
+        const sessionToken = crypto.randomBytes(32).toString('hex');
+        sessions[sessionToken] = {
+            type: 'discord',
+            id: user.id,
+            username: user.username,
+            discriminator: user.discriminator,
+            avatar: user.avatar,
+            banner: user.banner || null,
+            banner_color: user.banner_color || null
+        };
+        saveSessions(sessions);
 
-async function ensureMongo() {
-    const data = path.join(PERSIST_ROOT, 'mongodata');
-    try {
-        if (!fs.existsSync('/usr/local/bin/mongod')) return false;
-        fs.mkdirSync(data, { recursive: true });
-        if (!DB_ENGINE.mongodb) {
-            await runCmdAsync('mongod', ['--dbpath', data, '--bind_ip', '127.0.0.1', '--port', '27017', '--fork', '--logpath', path.join(data, 'mongod.log'), '--wiredTigerCacheSizeGB', '0.25']);
-            const check = await waitForPort(27017, 12, async () => {
-                const { MongoClient } = require('mongodb');
-                const mc = new MongoClient('mongodb://127.0.0.1:27017', { serverSelectionTimeoutMS: 1500 });
-                await mc.connect(); await mc.db('admin').command({ ping: 1 }); await mc.close(); return true;
-            });
-            if (!check) return false;
-        }
-        DB_ENGINE.mongodb = true;
-        return true;
-    } catch (e) { console.error('ensureMongo error:', e.message); return false; }
-}
+        addStaff(user);
+        slog(`Login Discord: ${user.username} (${user.id})`, 'auth');
 
-function ensureDbEngines() {
-    ensurePostgres().then(ok => console.log('Engine PostgreSQL:', ok ? 'up' : 'indisponivel'));
-    ensureMysql().then(ok => console.log('Engine MariaDB/MySQL:', ok ? 'up' : 'indisponivel'));
-    ensureRedis().then(ok => console.log('Engine Redis:', ok ? 'up' : 'indisponivel'));
-    ensureMongo().then(ok => console.log('Engine MongoDB:', ok ? 'up' : 'indisponivel'));
-}
-
-async function provisionDb(dbType, dbName, user, password) {
-    if (dbType === 'postgres') {
-        const c = new (require('pg').Client)({ host: '127.0.0.1', port: 5432, user: 'postgres', database: 'postgres' });
-        await c.connect();
-        await c.query('CREATE DATABASE "' + dbName + '"');
-        await c.query("CREATE USER \"" + user + "\" WITH PASSWORD '" + password + "'");
-        await c.query('GRANT ALL PRIVILEGES ON DATABASE "' + dbName + '" TO "' + user + '"');
-        await c.query('ALTER DATABASE "' + dbName + '" OWNER TO "' + user + '"');
-        await c.end();
-        return { host: 'localhost', port: 5432, user };
-    }
-    if (dbType === 'mysql' || dbType === 'mariadb') {
-        const m = require('mysql2/promise');
-        const conn = await m.createConnection({ host: '127.0.0.1', port: 3306, user: 'root' });
-        await conn.query('CREATE DATABASE `' + dbName + '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
-        await conn.query("CREATE USER '" + user + "'@'%' IDENTIFIED BY '" + password + "'");
-        await conn.query("GRANT ALL PRIVILEGES ON `" + dbName + "`.* TO '" + user + "'@'%'");
-        await conn.query('FLUSH PRIVILEGES');
-        await conn.end();
-        return { host: 'localhost', port: 3306, user };
-    }
-    if (dbType === 'redis') {
-        const port = redisNextPort++;
-        const dir = path.join(PERSIST_ROOT, 'redisdb', dbName);
-        fs.mkdirSync(dir, { recursive: true });
-        await runCmdAsync('chown', ['-R', 'redis:redis', path.join(PERSIST_ROOT, 'redisdb')]);
-        const ok = await runAs('redis', ['redis-server', '--port', String(port), '--bind', '127.0.0.1', '--requirepass', password, '--dir', dir, '--appendonly', 'yes', '--daemonize', 'yes', '--logfile', dir + '/redis.log']);
-        if (!ok.ok) { console.error('redis provision:', ok.out); throw new Error('Falha ao iniciar Redis na porta ' + port); }
-        return { host: 'localhost', port, user: 'default' };
-    }
-    if (dbType === 'mongodb') {
-        const { MongoClient } = require('mongodb');
-        const mc = new MongoClient('mongodb://127.0.0.1:27017', { serverSelectionTimeoutMS: 4000 });
-        await mc.connect();
-        const dbh = mc.db(dbName);
-        await dbh.createUser({ user, pwd: password, roles: [{ role: 'readWrite', db: dbName }] });
-        try { await dbh.command({ create: '_init', capped: true, size: 1024 }); } catch (e) {}
-        await mc.close();
-        return { host: 'localhost', port: 27017, user };
-    }
-    if (dbType === 'sqlite') {
-        const dir = path.join(PERSIST_ROOT, 'sqlite');
-        fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(path.join(dir, dbName + '.db'), '');
-        return { host: 'localhost', port: 0, user: '-' };
-    }
-    throw new Error('Tipo de banco desconhecido');
-}
-
-async function dropProvisioned(dbRec) {
-    const { db_type, db_name, db_user, db_port, db_password } = dbRec;
-    if (db_type === 'postgres') {
-        const c = new (require('pg').Client)({ host: '127.0.0.1', port: 5432, user: 'postgres', database: 'postgres' });
-        await c.connect();
-        await c.query('DROP DATABASE IF EXISTS "' + db_name + '" WITH (FORCE)');
-        await c.query('DROP USER IF EXISTS "' + db_user + '"');
-        await c.end();
-    } else if (db_type === 'mysql' || db_type === 'mariadb') {
-        const m = require('mysql2/promise');
-        const conn = await m.createConnection({ host: '127.0.0.1', port: 3306, user: 'root' });
-        await conn.query('DROP DATABASE IF EXISTS `' + db_name + '`');
-        await conn.query("DROP USER IF EXISTS '" + db_user + "'@'%'");
-        await conn.query('FLUSH PRIVILEGES');
-        await conn.end();
-    } else if (db_type === 'redis') {
-        await runCmdAsync('redis-cli', ['-p', String(db_port), '-a', db_password, 'shutdown', 'nosave']);
-        try { fs.rmSync(path.join(PERSIST_ROOT, 'redisdb', db_name), { recursive: true, force: true }); } catch (e) {}
-    } else if (db_type === 'mongodb') {
-        const { MongoClient } = require('mongodb');
-        const mc = new MongoClient('mongodb://127.0.0.1:27017', { serverSelectionTimeoutMS: 4000 });
-        await mc.connect();
-        try { await mc.db(db_name).dropUser(db_user); } catch (e) {}
-        try { await mc.db(db_name).dropDatabase(); } catch (e) {}
-        await mc.close();
-    } else if (db_type === 'sqlite') {
-        try { fs.rmSync(path.join(PERSIST_ROOT, 'sqlite', db_name + '.db'), { force: true }); } catch (e) {}
-    }
-}
-
-async function resetProvisionedPassword(dbRec, newPassword) {
-    const { db_type, db_name, db_user, db_port, db_password } = dbRec;
-    if (db_type === 'postgres') {
-        const c = new (require('pg').Client)({ host: '127.0.0.1', port: 5432, user: 'postgres', database: 'postgres' });
-        await c.connect();
-        await c.query("ALTER USER \"" + db_user + "\" WITH PASSWORD '" + newPassword + "'");
-        await c.end();
-    } else if (db_type === 'mysql' || db_type === 'mariadb') {
-        const m = require('mysql2/promise');
-        const conn = await m.createConnection({ host: '127.0.0.1', port: 3306, user: 'root' });
-        await conn.query("ALTER USER '" + db_user + "'@'%' IDENTIFIED BY '" + newPassword + "'");
-        await conn.query('FLUSH PRIVILEGES');
-        await conn.end();
-    } else if (db_type === 'redis') {
-        await runCmdAsync('redis-cli', ['-p', String(db_port), '-a', db_password, 'CONFIG', 'SET', 'requirepass', newPassword]);
-    } else if (db_type === 'mongodb') {
-        const { MongoClient } = require('mongodb');
-        const mc = new MongoClient('mongodb://127.0.0.1:27017', { serverSelectionTimeoutMS: 4000 });
-        await mc.connect();
-        await mc.db(db_name).updateUser(db_user, { pwd: newPassword, roles: [{ role: 'readWrite', db: db_name }] });
-        await mc.close();
-    }
-}
-
-app.get('/api/databases', auth, async (req, res) => {
-    const session = req.session;
-    const admin = await isAdmin(session);
-    const dbs = admin ? await db.getDatabases() : await db.getDatabases(session.id);
-    res.json(dbs.map(d => ({ ...d, db_password: d.db_password ? '***' : null })));
-});
-app.get('/api/db-engines', auth, (req, res) => {
-    res.json({
-        postgres: DB_ENGINE.postgres,
-        mysql: DB_ENGINE.mysql,
-        redis: DB_ENGINE.redis,
-        mongodb: DB_ENGINE.mongodb,
-        mongodInstalled: fs.existsSync('/usr/local/bin/mongod'),
-        ports: DB_ENGINE_PORTS
-    });
-});
-app.get('/api/admin/db-debug', adminOnly, (req, res) => {
-    const bins = ['mongod', 'mariadbd', 'mysqld', 'redis-server', 'redis-cli', 'runuser', 'su', 'sqlite3'];
-    const present = {};
-    for (const b of bins) {
-        try { present[b] = require('child_process').execFileSync('which', [b], { stdio: 'pipe', timeout: 3000 }).toString().trim(); }
-        catch (e) { present[b] = null; }
-    }
-    let pgdir = null;
-    try { if (fs.existsSync('/usr/lib/postgresql')) pgdir = fs.readdirSync('/usr/lib/postgresql'); } catch (e) {}
-    res.json({ bins: present, pgVersions: pgdir, engineLog: dbEngineLog });
-});
-app.post('/api/databases', auth, async (req, res) => {
-    const session = req.session;
-    const { dbType, dbName } = req.body;
-    const type = String(dbType || 'postgres').toLowerCase();
-    if (!DB_ALLOWED.includes(type)) return res.status(400).json({ error: 'Tipo de banco invalido' });
-    if (!dbName || !dbName.match(/^[a-z][a-z0-9_]{2,29}$/)) return res.status(400).json({ error: 'Nome invalido (minimo 3, sem espacos, minusculas)' });
-    const existing = await db.getDatabases(session.id);
-    if (existing.length >= 5) return res.status(400).json({ error: 'Limite de 5 bancos por usuario' });
-    const user = dbName + '_user';
-    const password = crypto.randomBytes(16).toString('hex');
-
-    if (!DB_ENGINE[type] && type !== 'sqlite') {
-        const jobKey = type + ':' + dbName;
-        if (dbCreateJobs[jobKey]) return res.json({ success: true, pending: true, dbName, type });
-        const job = { userId: session.id, type, dbName, user, password, status: 'starting', error: null, dbId: null };
-        dbCreateJobs[jobKey] = job;
-        (async () => {
-            try {
-                const ok = await ensureEngineOnce(type);
-                if (!ok) { job.status = 'error'; job.error = dbEngineLog[type] || 'Engine indisponivel'; return; }
-                const prov = await provisionDb(type, dbName, user, password);
-                const rec = await db.createDatabase({ userId: job.userId, dbType: type, dbName, dbUser: prov.user, dbPassword: password, dbHost: prov.host, dbPort: prov.port });
-                if (!rec) { try { await dropProvisioned({ db_type: type, db_name: dbName, db_user: user, db_password: password, db_port: prov.port }); } catch (e) {} job.status = 'error'; job.error = 'Erro ao salvar registro'; return; }
-                job.status = 'done'; job.dbId = rec.id;
-            } catch (e) {
-                job.status = 'error'; job.error = e.message;
-                console.error('Job criar banco falhou:', e.message);
-            }
-        })();
-        return res.json({ success: true, pending: true, dbName, type });
-    }
-
-    try {
-        const prov = await provisionDb(type, dbName, user, password);
-        const dbRecord = await db.createDatabase({ userId: session.id, dbType: type, dbName, dbUser: prov.user, dbPassword: password, dbHost: prov.host, dbPort: prov.port });
-        if (!dbRecord) {
-            try { await dropProvisioned({ db_type: type, db_name: dbName, db_user: user, db_password: password, db_port: prov.port }); } catch (e) {}
-            return res.status(500).json({ error: 'Erro ao salvar registro do banco' });
-        }
-        res.json({ success: true, db: { ...dbRecord, db_password: password } });
+        res.setHeader('Set-Cookie', `session=${sessionToken}; Path=/; HttpOnly; SameSite=Lax`);
+        res.redirect('/');
     } catch (e) {
-        console.error('Erro ao criar banco:', e.message);
-        res.status(500).json({ error: 'Erro ao criar banco: ' + e.message });
+        res.redirect('/');
     }
 });
-app.delete('/api/databases/:id', auth, async (req, res) => {
-    const session = req.session;
-    const admin = await isAdmin(session);
-    const dbRec = await db.getDatabaseById(parseInt(req.params.id));
-    if (!dbRec) return res.status(404).json({ error: 'Banco nao encontrado' });
-    if (!admin && dbRec.user_id !== session.id) return res.status(403).json({ error: 'Sem permissao' });
-    try { await dropProvisioned(dbRec); } catch (e) { console.error('Erro ao dropar banco real:', e.message); }
-    await db.deleteDatabase(parseInt(req.params.id));
+
+app.get('/auth/logout', (req, res) => {
+    const cookie = req.headers.cookie || '';
+    const match = cookie.match(/session=([^;]+)/);
+    if (match) { delete sessions[match[1]]; saveSessions(sessions); }
+    res.setHeader('Set-Cookie', 'session=; Path=/; HttpOnly; Max-Age=0');
     res.json({ success: true });
 });
-app.post('/api/databases/:id/reset-password', auth, async (req, res) => {
-    const session = req.session;
-    const admin = await isAdmin(session);
-    const dbRec = await db.getDatabaseById(parseInt(req.params.id));
-    if (!dbRec) return res.status(404).json({ error: 'Banco nao encontrado' });
-    if (!admin && dbRec.user_id !== session.id) return res.status(403).json({ error: 'Sem permissao' });
-    const newPassword = crypto.randomBytes(16).toString('hex');
-    try { await resetProvisionedPassword(dbRec, newPassword); } catch (e) { console.error('Erro ao resetar senha:', e.message); }
-    await db.resetDbPassword(parseInt(req.params.id), newPassword);
-    res.json({ success: true, newPassword });
-});
-app.get('/api/databases/:id/secret', auth, async (req, res) => {
-    const session = req.session;
-    const admin = await isAdmin(session);
-    const dbRec = await db.getDatabaseById(parseInt(req.params.id));
-    if (!dbRec) return res.status(404).json({ error: 'Banco nao encontrado' });
-    if (!admin && dbRec.user_id !== session.id) return res.status(403).json({ error: 'Sem permissao' });
-    res.json({ db_password: dbRec.db_password });
-});
 
-// === ANNOUNCEMENTS ===
-app.post('/api/announcements', adminOnly, async (req, res) => {
-    const { message } = req.body;
-    if (!message || typeof message !== 'string' || message.length > 500) return res.status(400).json({ error: 'Mensagem invalida' });
-    const ann = { id: ++lastAnnouncementId, message, author: req.session.username, timestamp: new Date().toISOString() };
-    announcements.push(ann);
-    if (announcements.length > 50) announcements.shift();
-    logActivity('announcement', 'Anuncio: ' + message.substring(0, 50), req.session);
+app.post('/auth/password', (req, res) => {
+    const { password } = req.body;
+    if (password !== PASSWORD) return res.status(401).json({ error: 'Senha incorreta' });
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    sessions[sessionToken] = { type: 'password', username: 'Admin' };
+    saveSessions(sessions);
+    addPasswordStaff();
+    slog('Login via senha de acesso', 'auth');
+    res.setHeader('Set-Cookie', `session=${sessionToken}; Path=/; HttpOnly; SameSite=Lax`);
     res.json({ success: true });
 });
-app.get('/api/announcements/last', auth, (req, res) => {
-    const last = req.session._lastAnnId || 0;
-    const latest = announcements[announcements.length - 1];
-    if (latest && latest.id > last) { req.session._lastAnnId = latest.id; res.json({ announcement: latest }); }
-    else res.json({ announcement: null });
-});
 
-// === AUTO ANNOUNCEMENT ===
-app.get('/api/auto-announcement', adminOnly, (req, res) => {
-    res.json({ enabled: autoAnnouncement.enabled, message: autoAnnouncement.message, intervalMinutes: Math.round(autoAnnouncement.intervalMs / 60000) });
-});
-app.post('/api/auto-announcement', adminOnly, async (req, res) => {
-    const { enabled, message, intervalMinutes } = req.body;
-    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled deve ser boolean' });
-    if (enabled && (!message || typeof message !== 'string' || message.length > 500)) return res.status(400).json({ error: 'Mensagem invalida' });
-    const intervalMs = (parseInt(intervalMinutes) || 10) * 60000;
-    autoAnnouncement = { enabled, message: message || '', intervalMs };
-    if (autoAnnounceTimer) { clearInterval(autoAnnounceTimer); autoAnnounceTimer = null; }
-    if (enabled) {
-        autoAnnounceTimer = setInterval(() => {
-            if (autoAnnouncement.message) {
-                const ann = { id: ++lastAnnouncementId, message: autoAnnouncement.message, author: 'Sistema (Auto)', timestamp: new Date().toISOString() };
-                announcements.push(ann);
-                if (announcements.length > 50) announcements.shift();
-            }
-        }, intervalMs);
-        logActivity('announcement', 'Auto-aviso ativado: ' + message.substring(0, 50) + ' (a cada ' + intervalMinutes + 'min)', req.session);
+app.get('/api/me', (req, res) => {
+    const session = getSession(req);
+    if (!session) return res.status(401).json({ error: 'Nao autorizado' });
+    if (session.type === 'discord') {
+        res.json({ id: session.id, username: session.username, discriminator: session.discriminator, avatar: session.avatar, banner: session.banner, banner_color: session.banner_color, type: 'discord' });
     } else {
-        logActivity('announcement', 'Auto-aviso desativado', req.session);
+        res.json({ id: '0', username: 'Admin', discriminator: '0', avatar: null, banner: null, banner_color: null, type: 'password' });
     }
-    const configPath = path.join(__dirname, 'data', 'auto_announcement.json');
-    try {
-        if (!fs.existsSync(path.join(__dirname, 'data'))) fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
-        fs.writeFileSync(configPath, JSON.stringify({ enabled, message: message || '', intervalMs }), 'utf8');
-    } catch(e) { console.error('Erro ao salvar auto-announcement:', e.message); }
+});
+
+// === STAFFS API ===
+app.get('/api/staffs', ownerOnly, (req, res) => {
+    const staffs = loadStaffs();
+    const banned = loadBanned();
+    const result = staffs.map(s => ({
+        ...s,
+        banned: banned.some(b => b.id === s.id)
+    }));
+    res.json(result);
+});
+
+app.post('/api/staffs/:id/ban', ownerOnly, (req, res) => {
+    const { id } = req.params;
+    if (id === OWNER_ID || id === 'password-admin') return res.status(400).json({ error: 'Nao pode banir owner/admin' });
+    const banned = loadBanned();
+    if (!banned.find(b => b.id === id)) {
+        const staff = loadStaffs().find(s => s.id === id);
+        banned.push({ id, username: staff ? staff.username : 'Desconhecido', bannedAt: new Date().toISOString() });
+        saveBanned(banned);
+        slog(`Staff banido: ${staff ? staff.username : id} (${id})`, 'warn');
+    }
     res.json({ success: true });
 });
-function loadAutoAnnConfig() {
-    try {
-        const configPath = path.join(__dirname, 'data', 'auto_announcement.json');
-        if (fs.existsSync(configPath)) {
-            const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-            if (saved.enabled) {
-                autoAnnouncement = { enabled: true, message: saved.message || '', intervalMs: saved.intervalMs || 600000 };
-                autoAnnounceTimer = setInterval(() => {
-                    if (autoAnnouncement.message) {
-                        const ann = { id: ++lastAnnouncementId, message: autoAnnouncement.message, author: 'Sistema (Auto)', timestamp: new Date().toISOString() };
-                        announcements.push(ann);
-                        if (announcements.length > 50) announcements.shift();
-                    }
-                }, autoAnnouncement.intervalMs);
-                console.log('Auto-announcement restaurado: a cada ' + Math.round(autoAnnouncement.intervalMs/60000) + 'min');
-            }
-        }
-    } catch(e) { console.error('Erro ao carregar auto-announcement:', e.message); }
-}
 
-// === ACTIVITY LOGS ===
-app.get('/api/activity-logs', adminOnly, (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-    res.json(activityLogs.slice(0, limit));
+app.post('/api/staffs/:id/unban', ownerOnly, (req, res) => {
+    const { id } = req.params;
+    let banned = loadBanned();
+    const staff = banned.find(b => b.id === id);
+    banned = banned.filter(b => b.id !== id);
+    saveBanned(banned);
+    if (staff) slog(`Staff desbanido: ${staff.username} (${id})`, 'info');
+    res.json({ success: true });
 });
 
-// === SESSION CLEANUP ===
-async function loadSessions() {
-    try { const saved = await db.getAllSessions(); Object.assign(sessions, saved); console.log('Sessoes carregadas:', Object.keys(sessions).length); } catch(e) { console.error('Erro ao carregar sessoes:', e.message); }
-}
-
-async function startBotsFromDB() {
-    const botList = await db.getBots();
-    for (const b of botList) {
-        if (b.status === 'running' || b.status === 'installing') {
-            await db.saveBot(b.name, { status: 'stopped', stoppedAt: new Date().toISOString() });
-        }
-    }
-    for (const b of botList) {
-        if (b.auto_start) {
-            const botDir = getBotPath(b.name);
-            if (fs.existsSync(botDir)) startBotProcess(b.name);
-        }
-    }
-    console.log('Auto-start bots iniciados');
-}
-
-async function sessionCleanup() {
-    await db.cleanOldSessions();
-    for (const [token, session] of Object.entries(sessions)) {
-        if (session.createdAt && Date.now() - new Date(session.createdAt).getTime() > 30 * 24 * 60 * 60 * 1000) {
-            delete sessions[token];
-            await db.deleteSession(token);
-        }
-    }
-}
-
-// === ERROR HANDLER ===
-app.use((err, req, res, next) => {
-    if (!res.headersSent) {
-        if (err instanceof multer.MulterError) {
-            const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Arquivo maior que o limite (200MB)' : 'Erro no upload: ' + err.message;
-            return res.status(400).json({ error: msg });
-        }
-        if (err.message === 'Apenas .ZIP') return res.status(400).json({ error: 'Apenas arquivos .ZIP' });
-        console.error('Erro na requisicao:', err);
-        return res.status(500).json({ error: 'Erro interno: ' + err.message });
-    }
-    next(err);
+app.get('/api/staffs/banned', ownerOnly, (req, res) => {
+    res.json(loadBanned());
 });
 
-// === STARTUP ===
-async function start() {
-    await db.connectDB();
-    await loadSessions();
-    await startBotsFromDB();
-    loadAutoAnnConfig();
-    setInterval(sessionCleanup, 3600000);
-    cleanupStaleUploads();
-    setInterval(cleanupStaleUploads, 30 * 60 * 1000);
-    setInterval(() => {
-        for (const [name, proc] of Object.entries(bots)) {
-            if (proc.exitCode !== null) {
-                delete bots[name];
-                db.saveBot(name, { status: 'stopped', stoppedAt: new Date().toISOString() });
-            }
-        }
-    }, 10000);
+// === DISK API ===
+app.get('/api/disk', auth, (req, res) => {
+    res.json(checkDiskSpace());
+});
 
-    app.listen(PORT, () => {
-        console.log('Servidor rodando na porta ' + PORT);
+// === BOT API ===
+app.get('/api/bots', auth, (req, res) => {
+    loadBots();
+    const session = getSession(req);
+    const ownerSession = session && session.type === 'discord' && session.id === OWNER_ID;
+    const userId = session && session.type === 'discord' ? session.id : null;
+    const meta = loadBotsMeta();
+
+    const list = Object.entries(bots)
+        .filter(([name]) => {
+            if (ownerSession) return true; // owner ve tudo
+            const botOwner = meta[name] ? meta[name].owner : null;
+            return botOwner === userId; // outros veem apenas seus bots
+        })
+        .map(([name, data]) => ({ name, status: data.status, logsCount: data.logs.length }));
+
+    res.json(list);
+});
+
+app.post('/api/bots', auth, (req, res, next) => {
+    upload.single('file')(req, res, (err) => {
+        if (err) {
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(413).json({ error: 'ZIP muito grande. Limite maximo: 50MB. Remova node_modules e arquivos desnecessarios do ZIP.' });
+            }
+            return res.status(400).json({ error: err.message || 'Erro no upload' });
+        }
+        next();
     });
-}
+}, (req, res) => {
+    try {
+        const session = getSession(req);
+        if (session && session.type === 'password') {
+            addPasswordStaff();
+        }
 
-start().catch(e => { console.error('Erro ao iniciar:', e); process.exit(1); });
+        const name = req.body.name;
+        if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) return res.status(400).json({ error: 'Nome invalido' });
 
-module.exports = app;
+        const botDir = getBotDir(name);
+        if (fs.existsSync(botDir)) return res.status(400).json({ error: 'Bot ja existe' });
+
+        // Verificar espaco em disco antes de criar o bot
+        const disk = checkDiskSpace();
+        if (!disk.ok) {
+            return res.status(507).json({
+                error: `Espaco em disco cheio no servidor (${disk.usedMB}MB/${disk.limitMB}MB). O dono precisa aumentar o volume ou deletar bots antigos.`
+            });
+        }
+        if (disk.freePercent < 10) {
+            slog(`AVISO: Disco com menos de 10% livre (${disk.usedMB}MB/${disk.limitMB}MB)`, 'warn');
+        }
+
+        fs.mkdirSync(botDir, { recursive: true });
+        bots[name] = { process: null, status: 'stopped', logs: [], port: null };
+
+        // Registrar dono do bot
+        const ownerId = session && session.type === 'discord' ? session.id : 'password-admin';
+        setBotOwner(name, ownerId);
+
+        if (req.file) {
+            const ext = path.extname(req.file.originalname).toLowerCase();
+            if (ext === '.zip') {
+                try {
+                    addLog(name, 'Extraindo ZIP...');
+                    const zip = new AdmZip(req.file.path);
+                    const entries = zip.getEntries();
+
+                    let extractTarget = botDir;
+
+                    const rootDirs = entries.filter(e => e.isDirectory && e.entryName.split('/').filter(Boolean).length === 1);
+                    const rootFiles = entries.filter(e => !e.isDirectory && e.entryName.split('/').filter(Boolean).length === 1);
+                    const hasInnerProject = entries.some(e => {
+                        if (e.isDirectory) return false;
+                        const parts = e.entryName.split('/').filter(Boolean);
+                        return parts.length >= 2 && (parts[parts.length - 1] === 'package.json' || parts[parts.length - 1] === 'index.js');
+                    });
+
+                    if (rootDirs.length === 1 && rootFiles.length === 0 && hasInnerProject) {
+                        addLog(name, `ZIP com pasta unica, extraindo direto na raiz...`);
+                        for (const entry of entries) {
+                            if (entry.isDirectory) continue;
+                            const parts = entry.entryName.split('/').filter(Boolean);
+                            const relativePath = parts.slice(1).join('/');
+                            if (!relativePath) continue;
+                            if (relativePath.startsWith('node_modules/')) continue;
+                            const dest = path.join(botDir, relativePath);
+                            const destDir = path.dirname(dest);
+                            if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+                            fs.writeFileSync(dest, entry.getData());
+                        }
+                    } else if (rootDirs.length === 1 && rootFiles.length === 0) {
+                        addLog(name, `ZIP com pasta "${rootDirs[0].name}", extraindo e movendo...`);
+                        const tempDir = path.join(os.tmpdir(), `bot-extract-${Date.now()}`);
+                        zip.extractAllTo(tempDir, true);
+                        const innerDir = path.join(tempDir, rootDirs[0].name);
+                        if (fs.existsSync(innerDir)) {
+                            const innerEntries = fs.readdirSync(innerDir, { withFileTypes: true });
+                            for (const ie of innerEntries) {
+                                const src = path.join(innerDir, ie.name);
+                                const dst = path.join(botDir, ie.name);
+                                if (ie.isDirectory()) {
+                                    fs.cpSync(src, dst, { recursive: true });
+                                } else {
+                                    fs.copyFileSync(src, dst);
+                                }
+                            }
+                        }
+                        fs.rmSync(tempDir, { recursive: true, force: true });
+                    } else {
+                        addLog(name, 'ZIP na raiz, extraindo...');
+                        for (const entry of entries) {
+                            if (entry.isDirectory) continue;
+                            const parts = entry.entryName.split('/').filter(Boolean);
+                            const relativePath = parts.join('/');
+                            if (!relativePath) continue;
+                            if (relativePath.startsWith('node_modules/')) continue;
+                            const dest = path.join(botDir, relativePath);
+                            const destDir = path.dirname(dest);
+                            if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+                            fs.writeFileSync(dest, entry.getData());
+                        }
+                    }
+
+                    try { fs.unlinkSync(req.file.path); } catch(e) {}
+
+                    flattenBotDir(botDir, name);
+
+                    const files = fs.readdirSync(botDir);
+                    addLog(name, `Arquivos: ${files.join(', ') || 'nenhum'}`);
+
+                    if (!fs.existsSync(path.join(botDir, 'package.json')) && !fs.existsSync(path.join(botDir, 'index.js'))) {
+                        addLog(name, 'AVISO: Nenhum package.json ou index.js encontrado na raiz!');
+                    }
+
+                    addLog(name, 'ZIP extraido com sucesso!');
+                } catch (e) {
+                    addLog(name, `Erro ao extrair ZIP: ${e.message}`);
+                    try { fs.unlinkSync(req.file.path); } catch(ex) {}
+                    try { fs.rmSync(botDir, { recursive: true, force: true }); } catch(ex) {}
+                    delete bots[name];
+                    return res.status(400).json({ error: 'Arquivo ZIP invalido: ' + e.message });
+                }
+            } else {
+                fs.copyFileSync(req.file.path, path.join(botDir, req.file.originalname));
+                try { fs.unlinkSync(req.file.path); } catch(e) {}
+            }
+        }
+
+        addLog(name, 'Bot criado com sucesso!');
+        slog(`Bot criado: "${name}" por ${ownerId}`, 'bot');
+        res.json({ success: true, name });
+    } catch (e) {
+        const name = req.body && req.body.name;
+        if (name) {
+            try { fs.rmSync(getBotDir(name), { recursive: true, force: true }); } catch(ex) {}
+            delete bots[name];
+        }
+        try { if (req.file) fs.unlinkSync(req.file.path); } catch(ex) {}
+        res.status(500).json({ error: 'Erro interno: ' + e.message });
+    }
+});
+
+app.post('/api/bots/:name/start', auth, (req, res) => {
+    const { name } = req.params;
+    if (!bots[name]) return res.status(404).json({ error: 'Bot nao encontrado' });
+    if (!canAccessBot(req, name)) return res.status(403).json({ error: 'Acesso negado' });
+    slog(`Bot ligado: "${name}"`, 'bot');
+    res.json({ success: startBot(name) });
+});
+
+app.post('/api/bots/:name/stop', auth, (req, res) => {
+    const { name } = req.params;
+    if (!bots[name]) return res.status(404).json({ error: 'Bot nao encontrado' });
+    if (!canAccessBot(req, name)) return res.status(403).json({ error: 'Acesso negado' });
+    slog(`Bot desligado: "${name}"`, 'bot');
+    res.json({ success: stopBot(name) });
+});
+
+app.post('/api/bots/:name/restart', auth, (req, res) => {
+    const { name } = req.params;
+    if (!bots[name]) return res.status(404).json({ error: 'Bot nao encontrado' });
+    if (!canAccessBot(req, name)) return res.status(403).json({ error: 'Acesso negado' });
+    slog(`Bot reiniciado: "${name}"`, 'bot');
+    res.json({ success: restartBot(name) });
+});
+
+app.delete('/api/bots/:name', auth, (req, res) => {
+    const { name } = req.params;
+    if (!bots[name]) return res.status(404).json({ error: 'Bot nao encontrado' });
+    if (!canAccessBot(req, name)) return res.status(403).json({ error: 'Acesso negado' });
+    slog(`Bot deletado: "${name}"`, 'warn');
+    deleteBot(name);
+    // Remover metadata do bot deletado
+    const meta = loadBotsMeta();
+    delete meta[name];
+    saveBotsMeta(meta);
+    res.json({ success: true });
+});
+
+app.get('/api/bots/:name/logs', auth, (req, res) => {
+    const { name } = req.params;
+    if (!bots[name]) return res.status(404).json({ error: 'Bot nao encontrado' });
+    if (!canAccessBot(req, name)) return res.status(403).json({ error: 'Acesso negado' });
+    res.json({ logs: bots[name].logs });
+});
+
+app.get('/health', (req, res) => {
+    res.json({ ok: true });
+});
+
+app.get('/api/server-logs', ownerOnly, (req, res) => {
+    const limit = parseInt(req.query.limit) || 200;
+    res.json({ logs: serverLogs.slice(-limit) });
+});
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(PORT, () => {
+    slog(`Servidor iniciado na porta ${PORT}`, 'info');
+    slog(`Discord OAuth: ${DISCORD_CLIENT_ID !== 'SEU_CLIENT_ID' ? 'Configurado' : 'Nao configurado'}`, 'info');
+
+    // Auto-religar todos os bots que existem no disco
+    const allBots = Object.keys(bots);
+    if (allBots.length > 0) {
+        slog(`Auto-iniciando ${allBots.length} bot(s)...`, 'info');
+        allBots.forEach((name, i) => {
+            setTimeout(() => {
+                slog(`Auto-iniciando bot: "${name}"`, 'bot');
+                startBot(name);
+            }, i * 3000); // espaca 3s entre cada bot para nao sobrecarregar
+        });
+    }
+
+    console.log(`Painel rodando em http://localhost:${PORT}`);
+    console.log(`Senha: ${PASSWORD}`);
+    console.log(`Discord OAuth: ${DISCORD_CLIENT_ID !== 'SEU_CLIENT_ID' ? 'Configurado' : 'Nao configurado'}`);
+});

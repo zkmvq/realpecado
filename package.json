@@ -1,20 +1,14 @@
 {
-  "name": "realpecado-bot-host",
+  "name": "bot-host",
   "version": "1.0.0",
-  "description": "Painel de hospedagem de bots REALPECADO",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "adm-zip": "^0.5.10",
+    "adm-zip": "^0.6.0",
     "express": "^4.18.2",
-    "express-rate-limit": "^7.1.4",
-    "mongodb": "^6.3.0",
-    "morgan": "^1.10.0",
-    "multer": "^1.4.5-lts.1",
-    "mysql2": "^3.23.2",
-    "pg": "^8.11.3",
-    "redis": "^6.2.0"
+    "extract-zip": "^2.0.1",
+    "multer": "^1.4.5-lts.1"
   }
 }
