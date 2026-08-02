@@ -1090,16 +1090,17 @@ async function waitForPort(port, attempts, checkFn) {
 async function ensurePostgres() {
     const pgBin = pgBinDir();
     if (!pgBin) { dbEngineLog.postgres = 'pasta de binarios postgres nao encontrada'; console.error('ensurePostgres:', dbEngineLog.postgres); return false; }
+    const pgCmd = pgBin + '/bin';
     const data = path.join(PERSIST_ROOT, 'pgdata');
     try {
         if (!fs.existsSync(path.join(data, 'PG_VERSION'))) {
             fs.mkdirSync(data, { recursive: true });
             await runCmdAsync('chown', ['-R', 'postgres:postgres', data]);
-            const init = await runAs('postgres', [pgBin + '/initdb', '-D', data, '-A', 'trust', '-U', 'postgres', '--no-locale', '--encoding=UTF8']);
+            const init = await runAs('postgres', [pgCmd + '/initdb', '-D', data, '-A', 'trust', '-U', 'postgres', '--no-locale', '--encoding=UTF8']);
             if (!init.ok) { dbEngineLog.postgres = 'initdb: ' + init.out.slice(0, 800); console.error('ensurePostgres:', dbEngineLog.postgres); return false; }
         }
         if (!DB_ENGINE.postgres) {
-            const started = await runAs('postgres', [pgBin + '/pg_ctl', '-D', data, '-l', data + '/server.log', '-o', '-p 5432 -c listen_addresses=127.0.0.1', '-w', 'start']);
+            const started = await runAs('postgres', [pgCmd + '/pg_ctl', '-D', data, '-l', data + '/server.log', '-o', '-p 5432 -c listen_addresses=127.0.0.1', '-w', 'start']);
             if (!started.ok) dbEngineLog.postgres = 'pg_ctl: ' + started.out.slice(0, 800);
         }
         const check = await waitForPort(5432, 15, async () => {
