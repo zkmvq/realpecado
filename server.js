@@ -860,7 +860,7 @@ app.post('/api/bots/start-all', adminOnly, async (req, res) => {
         const botDir = getBotPath(b.name);
         if (!fs.existsSync(botDir)) { results.failed.push({ name: b.name, error: 'Diretorio nao encontrado' }); continue; }
         if (bots[b.name] && bots[b.name].exitCode === null) { results.success.push(b.name); continue; }
-        const result = startBotProcess(b.name);
+        const result = await startBotProcess(b.name);
         if (result.success) { results.success.push(b.name); } else { results.failed.push({ name: b.name, error: result.error }); }
     }
     logActivity('bot_start_all', 'Ligou todos os bots (' + results.success.length + ' ok, ' + results.failed.length + ' falha)', req.session);
