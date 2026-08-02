@@ -1559,6 +1559,26 @@ async function loadDatabases() {
     }).join('');
 }
 
+async function showDbSuccess(db) {
+    _dbPasswords[db.id] = db.db_password;
+    const conn = connString(db.db_type, db.db_name, db.db_host, db.db_port, db.db_user, db.db_password);
+    const s = document.getElementById('db-modal-status');
+    s.innerHTML = `Banco "<strong>${esc(db.db_name)}</strong>" criado!<br><span style="font-size:11px;color:#a1a1aa">Usuario: ${esc(db.db_user)} | Host: ${esc(db.db_host)}:${db.db_port}</span><br><span style="font-size:11px;color:#f59e0b">Senha: ${esc(db.db_password)} (copie agora!)</span><br><span style="font-size:11px;color:#6ee7b7;word-break:break-all">${esc(conn)}</span>`;
+    s.style.color = '#22c55e';
+    document.getElementById('db-modal-name').value = '';
+    loadDatabases();
+}
+
+async function pollForDb(dbName, dbType, attempts) {
+    for (let i = 0; i < attempts; i++) {
+        await new Promise(r => setTimeout(r, 2500));
+        const list = await apiFetch('/api/databases');
+        const found = (list || []).find(d => d.db_name === dbName && d.db_type === dbType);
+        if (found) return found;
+    }
+    return null;
+}
+
 async function createDatabase() {
     const dbType = currentDbType;
     const dbName = document.getElementById('db-modal-name').value.trim().toLowerCase();
@@ -1568,12 +1588,20 @@ async function createDatabase() {
     s.textContent = 'Criando banco real no servidor...'; s.style.color = '#f59e0b';
     const data = await apiFetch('/api/databases', { method: 'POST', body: JSON.stringify({ dbType, dbName }) });
     if (data && data.success) {
-        _dbPasswords[data.db.id] = data.db.db_password;
-        const conn = connString(data.db.db_type, data.db.db_name, data.db.db_host, data.db.db_port, data.db.db_user, data.db.db_password);
-        s.innerHTML = `Banco "<strong>${esc(data.db.db_name)}</strong>" criado!<br><span style="font-size:11px;color:#a1a1aa">Usuario: ${esc(data.db.db_user)} | Host: ${esc(data.db.db_host)}:${data.db.db_port}</span><br><span style="font-size:11px;color:#f59e0b">Senha: ${esc(data.db.db_password)} (copie agora!)</span><br><span style="font-size:11px;color:#6ee7b7;word-break:break-all">${esc(conn)}</span>`;
-        s.style.color = '#22c55e';
-        document.getElementById('db-modal-name').value = '';
-        loadDatabases();
+        if (data.pending) {
+            s.innerHTML = 'Subindo o motor do banco e criando... aguarde (na primeira vez pode levar ~1 min).';
+            s.style.color = '#f59e0b';
+            const found = await pollForDb(dbName, dbType, 40);
+            if (found) {
+                const secret = await apiFetch('/api/databases/' + found.id + '/secret');
+                if (secret && secret.db_password) found.db_password = secret.db_password;
+                showDbSuccess(found);
+            } else {
+                s.textContent = 'Tempo esgotado ao criar o banco. Tente novamente.'; s.style.color = '#ef4444';
+            }
+        } else {
+            showDbSuccess(data.db);
+        }
     } else {
         s.textContent = (data && data.error) || 'Erro ao criar banco'; s.style.color = '#ef4444';
     }

@@ -1065,6 +1065,26 @@ app.post('/api/purchases/:id/reject', adminOnly, async (req, res) => {
 // === DATABASES (in-container engines) ===
 const DB_ENGINE = { postgres: false, mysql: false, redis: false, mongodb: false };
 const dbEngineLog = {};
+const enginePromises = {};
+const dbCreateJobs = {};
+
+async function ensureEngineOnce(type) {
+    if (type === 'sqlite') return true;
+    if (DB_ENGINE[type]) return true;
+    if (enginePromises[type]) return enginePromises[type];
+    const p = (async () => {
+        let ok = false;
+        if (type === 'postgres') ok = await ensurePostgres();
+        else if (type === 'mysql' || type === 'mariadb') ok = await ensureMysql();
+        else if (type === 'redis') ok = await ensureRedis();
+        else if (type === 'mongodb') ok = await ensureMongo();
+        DB_ENGINE[type] = ok;
+        return ok;
+    })();
+    enginePromises[type] = p;
+    p.then(ok => { if (!ok) enginePromises[type] = null; }).catch(() => { enginePromises[type] = null; });
+    return p;
+}
 const DB_ALLOWED = ['postgres', 'mongodb', 'mysql', 'redis', 'mariadb', 'sqlite'];
 const DB_ENGINE_PORTS = { postgres: 5432, mysql: 3306, mariadb: 3306, redis: 6379, mongodb: 27017 };
 let redisNextPort = 6380;
@@ -1323,14 +1343,29 @@ app.post('/api/databases', auth, async (req, res) => {
     if (existing.length >= 5) return res.status(400).json({ error: 'Limite de 5 bancos por usuario' });
     const user = dbName + '_user';
     const password = crypto.randomBytes(16).toString('hex');
+
+    if (!DB_ENGINE[type] && type !== 'sqlite') {
+        const jobKey = type + ':' + dbName;
+        if (dbCreateJobs[jobKey]) return res.json({ success: true, pending: true, dbName, type });
+        const job = { userId: session.id, type, dbName, user, password, status: 'starting', error: null, dbId: null };
+        dbCreateJobs[jobKey] = job;
+        (async () => {
+            try {
+                const ok = await ensureEngineOnce(type);
+                if (!ok) { job.status = 'error'; job.error = dbEngineLog[type] || 'Engine indisponivel'; return; }
+                const prov = await provisionDb(type, dbName, user, password);
+                const rec = await db.createDatabase({ userId: job.userId, dbType: type, dbName, dbUser: prov.user, dbPassword: password, dbHost: prov.host, dbPort: prov.port });
+                if (!rec) { try { await dropProvisioned({ db_type: type, db_name: dbName, db_user: user, db_password: password, db_port: prov.port }); } catch (e) {} job.status = 'error'; job.error = 'Erro ao salvar registro'; return; }
+                job.status = 'done'; job.dbId = rec.id;
+            } catch (e) {
+                job.status = 'error'; job.error = e.message;
+                console.error('Job criar banco falhou:', e.message);
+            }
+        })();
+        return res.json({ success: true, pending: true, dbName, type });
+    }
+
     try {
-        let ready = false;
-        if (type === 'postgres') ready = await ensurePostgres();
-        else if (type === 'mysql' || type === 'mariadb') ready = await ensureMysql();
-        else if (type === 'redis') ready = await ensureRedis();
-        else if (type === 'mongodb') ready = await ensureMongo();
-        else if (type === 'sqlite') ready = true;
-        if (!ready) return res.status(503).json({ error: 'Engine do banco nao esta disponivel no servidor no momento' });
         const prov = await provisionDb(type, dbName, user, password);
         const dbRecord = await db.createDatabase({ userId: session.id, dbType: type, dbName, dbUser: prov.user, dbPassword: password, dbHost: prov.host, dbPort: prov.port });
         if (!dbRecord) {
@@ -1363,6 +1398,14 @@ app.post('/api/databases/:id/reset-password', auth, async (req, res) => {
     try { await resetProvisionedPassword(dbRec, newPassword); } catch (e) { console.error('Erro ao resetar senha:', e.message); }
     await db.resetDbPassword(parseInt(req.params.id), newPassword);
     res.json({ success: true, newPassword });
+});
+app.get('/api/databases/:id/secret', auth, async (req, res) => {
+    const session = req.session;
+    const admin = await isAdmin(session);
+    const dbRec = await db.getDatabaseById(parseInt(req.params.id));
+    if (!dbRec) return res.status(404).json({ error: 'Banco nao encontrado' });
+    if (!admin && dbRec.user_id !== session.id) return res.status(403).json({ error: 'Sem permissao' });
+    res.json({ db_password: dbRec.db_password });
 });
 
 // === ANNOUNCEMENTS ===
